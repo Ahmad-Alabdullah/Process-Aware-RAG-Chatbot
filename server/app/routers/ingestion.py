@@ -1,0 +1,36 @@
+from pathlib import Path
+import os, uuid, shutil, json
+import aiofiles
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from app.core.clients import get_redis
+
+router = APIRouter()
+
+UPLOAD_DIR = Path("/server/data/tmp_uploads")
+
+
+@router.post("/upload")
+async def upload_document(
+    file: UploadFile = File(...), source: str = Form("manual"), tags: str = Form("")
+):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    doc_id = str(uuid.uuid4())
+    dst = os.path.join(UPLOAD_DIR, f"{doc_id}-{file.filename}")
+    async with aiofiles.open(dst, "wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            await out.write(chunk)
+
+    r = get_redis()
+    await r.xadd(
+        "doc.uploaded",
+        {"document_id": doc_id, "path": dst, "source": source, "tags": tags},
+    )
+    return {"document_id": doc_id, "path": dst}
+
+
+@router.get("/documents")
+async def list_documents():
+    # Minimal: nur Dateiliste des Upload-Verzeichnisses
+    if not os.path.exists(UPLOAD_DIR):
+        return []
+    return [{"file": p} for p in os.listdir(UPLOAD_DIR)]

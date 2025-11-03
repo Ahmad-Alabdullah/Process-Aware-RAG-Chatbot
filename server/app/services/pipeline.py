@@ -131,37 +131,71 @@ def _uuid_for(doc_id: str, i: int) -> str:
     return str(uuid5(NAMESPACE_URL, f"{doc_id}:{i}"))
 
 
-def index_chunks(doc_id: str, chunks: List[Tuple[str, dict]]):
+def index_chunks(
+    doc_id: str,
+    chunks: List[Tuple[str, dict]],
+    *,
+    process_id: str | None = None,
+    node_map: dict | None = None,
+    lane_map: dict | None = None,
+):
     os_client = get_opensearch()
     qd = get_qdrant()
+    node_map = node_map or {}
+    lane_map = lane_map or {}
 
     texts = [t for t, _ in chunks]
     vectors = embed_texts(texts)
 
-    # OpenSearch
     for i, (t, meta) in enumerate(chunks):
+        page = meta.get("page_number")
+        node_id = None
+        lane_id = None
+
+        # Heuristik: mappe Seite -> Node; Node -> Lane
+        if page is not None:
+            node_id = node_map.get(str(page)) or node_map.get(int(page), None)
+        if node_id:
+            lane_id = lane_map.get(node_id)
+
+        # erweiterte Meta/Payload
+        os_meta = {
+            **meta,
+            **({"processId": process_id} if process_id else {}),
+            **({"nodeId": node_id} if node_id else {}),
+            **({"laneId": lane_id} if lane_id else {}),
+        }
+
+        # --- OpenSearch ---
         os_client.index(
             index=settings.OS_INDEX,
             id=f"{doc_id}:{i}",
-            body={"document_id": doc_id, "text": t, "meta": meta},
+            body={"document_id": doc_id, "text": t, "meta": os_meta},
         )
 
-    # Qdrant
+    # --- Qdrant ---
     from qdrant_client.http.models import PointStruct
 
-    points = [
-        PointStruct(
-            id=_uuid_for(doc_id, i),
-            vector=v,
-            payload={
-                "document_id": doc_id,
-                "text": t,
-                "chunk_id": f"{doc_id}:{i}",
-                **meta,
-            },
+    points = []
+    for i, ((t, meta), v) in enumerate(zip(chunks, vectors)):
+        page = meta.get("page_number")
+        node_id = (
+            node_map.get(str(page)) or node_map.get(int(page), None)
+            if page is not None
+            else None
         )
-        for i, ((t, meta), v) in enumerate(zip(chunks, vectors))
-    ]
+        lane_id = lane_map.get(node_id) if node_id else None
+
+        payload = {
+            "document_id": doc_id,
+            "text": t,
+            "chunk_id": f"{doc_id}:{i}",
+            "processId": process_id,
+            "nodeId": node_id,
+            "laneId": lane_id,
+            **meta,
+        }
+        points.append(PointStruct(id=_uuid_for(doc_id, i), vector=v, payload=payload))
     qd.upsert(collection_name=settings.QDRANT_COLLECTION, points=points)
 
 
@@ -189,12 +223,33 @@ async def consume_uploads(r):
             for msg_id, fields in entries:
                 doc_id = fields.get("document_id")
                 p = Path(fields.get("path", "")).expanduser()
+
+                # optionale Prozess-/Mapping-Infos aus dem Stream
+                process_id = fields.get("process_id")  # z.B. "Process_BEM"
+                node_map_json = fields.get(
+                    "node_map"
+                )  # JSON: {"1": "Task_X", "2": "Task_Y"} (page -> nodeId)
+                lane_map_json = fields.get(
+                    "lane_map"
+                )  # JSON: {"Task_X": "Lane_HR", ...}
+
+                node_map = json.loads(node_map_json) if node_map_json else {}
+                lane_map = json.loads(lane_map_json) if lane_map_json else {}
+
                 try:
                     if not p.exists():
                         raise FileNotFoundError(f"Upload file missing: {p}")
-                    parsed = parse_pdf(str(p))  # -> List[(text, payload)]
+                    parsed = parse_pdf(
+                        str(p)
+                    )  # -> List[(text, payload)]  payload enthält page_number/section_title/roles
                     if parsed:
-                        index_chunks(doc_id, parsed)  # payload in OS/Qdrant speichern
+                        index_chunks(
+                            doc_id,
+                            parsed,
+                            process_id=process_id,
+                            node_map=node_map,
+                            lane_map=lane_map,
+                        )
                     await r.xadd(
                         "doc.indexed",
                         {"document_id": doc_id, "chunks": str(len(parsed))},

@@ -50,82 +50,76 @@ def ensure_schema():
 
 
 # ---------- Upsert Whitelist ----------
-def upsert_whitelist(spec: WhitelistSpec) -> Dict[str, Any]:
-    spec = spec.normalized()
+def upsert_whitelist(spec: WhitelistSpec) -> dict:
     ensure_schema()
     with _driver().session() as s:
-        # Whitelist-Knoten
         s.run(
             """
         MERGE (w:Whitelist {id:$id})
-          ON CREATE SET w.name=$name, w.processId=$pid, w.allow_types=$atypes
-          ON MATCH  SET w.name=$name, w.processId=$pid, w.allow_types=$atypes
+        SET w.name=$name, w.processId=$process_id
         """,
-            id=spec.id,
-            name=spec.name,
-            pid=spec.process_id,
-            atypes=spec.allow_types,
+            **spec.model_dump(),
         )
 
-        # Beziehungen zu Nodes
+        # Bind Whitelist zu Process
         s.run(
             """
-        MATCH (w:Whitelist {id:$id})
-        OPTIONAL MATCH (w)-[r:ALLOWS_NODE]->(:Node)
-        DELETE r
-        WITH w
+        MATCH (pr:Process {xmlId:$pid})
+        MATCH (w:Whitelist {id:$wid})
+        MERGE (w)-[:FOR_PROCESS]->(pr)
+        """,
+            pid=spec.process_id,
+            wid=spec.id,
+        )
+
+        # Erlaubte Nodes (xmlId)
+        s.run(
+            """
         UNWIND $nids AS nid
-        MATCH (n:Node {id:nid, processId:$pid})
-        MERGE (w)-[:ALLOWS_NODE]->(n)
+        MATCH (n:Node {xmlId:nid})
+        MATCH (w:Whitelist {id:$wid})
+        MERGE (w)-[:ALLOW_NODE]->(n)
         """,
-            id=spec.id,
-            pid=spec.process_id,
             nids=spec.allow_nodes,
+            wid=spec.id,
         )
 
-        # Beziehungen zu Lanes
+        # Erlaubte Lanes (xmlId)
         s.run(
             """
-        MATCH (w:Whitelist {id:$id})
-        OPTIONAL MATCH (w)-[r:ALLOWS_LANE]->(:Lane)
-        DELETE r
-        WITH w
         UNWIND $lids AS lid
-        MATCH (l:Lane {id:lid, processId:$pid})
-        MERGE (w)-[:ALLOWS_LANE]->(l)
+        MATCH (l:Lane {xmlId:lid})
+        MATCH (w:Whitelist {id:$wid})
+        MERGE (w)-[:ALLOW_LANE]->(l)
         """,
-            id=spec.id,
-            pid=spec.process_id,
             lids=spec.allow_lanes,
+            wid=spec.id,
         )
 
-        # Principals binden
+        # Erlaubte Typen
         s.run(
             """
-        MATCH (w:Whitelist {id:$id})
-        OPTIONAL MATCH (:Principal)-[r:USES]->(w)
-        DELETE r
-        WITH w
-        UNWIND $pids AS pid
-        MERGE (p:Principal {id:pid})
-        MERGE (p)-[:USES]->(w)
+        MATCH (w:Whitelist {id:$wid})
+        SET w.allowTypes = $types
         """,
-            id=spec.id,
-            pids=spec.principals,
+            wid=spec.id,
+            types=spec.allow_types,
         )
 
-        rec = s.run(
+        # Principals ↔ Whitelist
+        s.run(
             """
-        MATCH (w:Whitelist {id:$id})
-        OPTIONAL MATCH (w)-[:ALLOWS_NODE]->(n:Node {processId:w.processId})
-        WITH w, collect(n.id) AS nids
-        OPTIONAL MATCH (w)-[:ALLOWS_LANE]->(l:Lane {processId:w.processId})
-        RETURN w.id AS id, w.name AS name, w.processId AS processId, nids AS allow_nodes,
-               collect(l.id) AS allow_lanes, w.allow_types AS allow_types
+        UNWIND $p AS pid
+        MERGE (u:Principal {id:pid})
+        WITH u
+        MATCH (w:Whitelist {id:$wid})
+        MERGE (u)-[:USES]->(w)
         """,
-            id=spec.id,
-        ).single()
-        return dict(rec) if rec else {"ok": False}
+            p=spec.principals,
+            wid=spec.id,
+        )
+
+        return {"id": spec.id}
 
 
 # ---------- Resolve principal -> whitelist ids ----------
@@ -230,3 +224,134 @@ def build_qdrant_filter(
     if lane_ids:
         must.append({"key": "laneId", "match": {"any": lane_ids}})
     return {"must": must}
+
+
+def create_default_whitelist(definition_id: str) -> Dict[str, int]:
+    """
+    Erzeugt je Lane eine Whitelist-Regel:
+      - allowedRoles = [Lane.name]   (Best Practice: Lanes nach Rollen/Funktionen benennen)
+      - nodeIds = alle flowNodeRef der Lane
+      - processId = zugehöriger Prozess
+    Falls keine Lanes vorhanden sind: 1 Regel je Prozess (alle Nodes).
+    """
+    rules_created = 0
+    lanes_count = 0
+
+    with _driver().session() as s:
+        # Whitelist-Knoten je Definition
+        s.run(
+            """
+        MERGE (w:Whitelist {definitionId:$defs})
+        ON CREATE SET w.createdAt=timestamp()
+        """,
+            defs=definition_id,
+        )
+
+        # Lanes + Node-Mapping + Prozess
+        data = s.run(
+            """
+        MATCH (d:BPMN {definitionId:$defs})-[:CONTAINS]->(pr:Process)-[:HAS_LANE]->(l:Lane)
+        OPTIONAL MATCH (l)-[:CONTAINS]->(n:Node)
+        WITH d, pr, l, collect(n.xmlId) AS nodeIds
+        RETURN pr.xmlId AS processId, l.xmlId AS laneId, coalesce(l.name,'') AS laneName, nodeIds
+        """,
+            defs=definition_id,
+        ).data()
+
+        if data:
+            lanes_count = len({row["laneId"] for row in data})
+            for row in data:
+                process_id = row["processId"]
+                lane_id = row["laneId"]
+                lane_name = row["laneName"]
+                node_ids = [nid for nid in row["nodeIds"] if nid]
+                s.run(
+                    """
+                MATCH (w:Whitelist {definitionId:$defs})
+                MERGE (r:WhitelistRule {definitionId:$defs, laneId:$laneId})
+                SET r.processId=$proc, r.nodeIds=$nodes,
+                    r.allowedRoles = CASE WHEN $laneName='' THEN [] ELSE [$laneName] END,
+                    r.allowedPrincipals = coalesce(r.allowedPrincipals, [])
+                MERGE (w)-[:HAS_RULE]->(r)
+                """,
+                    defs=definition_id,
+                    laneId=lane_id,
+                    proc=process_id,
+                    nodes=node_ids,
+                    laneName=lane_name,
+                )
+                rules_created += 1
+        else:
+            # Fallback: Keine Lanes → Regeln je Prozess mit allen Nodes
+            data2 = s.run(
+                """
+            MATCH (d:BPMN {definitionId:$defs})-[:CONTAINS]->(pr:Process)-[:CONTAINS]->(n:Node)
+            WITH pr, collect(DISTINCT n.xmlId) AS nodes
+            RETURN pr.xmlId AS processId, nodes
+            """,
+                defs=definition_id,
+            ).data()
+            for row in data2:
+                s.run(
+                    """
+                MATCH (w:Whitelist {definitionId:$defs})
+                MERGE (r:WhitelistRule {definitionId:$defs, processId:$proc, laneId:'*'})
+                SET r.nodeIds=$nodes,
+                    r.allowedRoles = coalesce(r.allowedRoles, []),
+                    r.allowedPrincipals = coalesce(r.allowedPrincipals, [])
+                MERGE (w)-[:HAS_RULE]->(r)
+                """,
+                    defs=definition_id,
+                    proc=row["processId"],
+                    nodes=row["nodes"],
+                )
+                rules_created += 1
+
+    return {"rules": rules_created, "lanes": lanes_count}
+
+
+def list_whitelist_rules(definition_id: str) -> List[Dict]:
+    with _driver().session() as s:
+        rows = s.run(
+            """
+        MATCH (w:Whitelist {definitionId:$defs})-[:HAS_RULE]->(r:WhitelistRule)
+        RETURN r.definitionId AS definitionId, r.processId AS processId, r.laneId AS laneId,
+               r.allowedRoles AS allowedRoles, r.allowedPrincipals AS allowedPrincipals,
+               r.nodeIds AS nodeIds
+        ORDER BY r.processId, r.laneId
+        """,
+            defs=definition_id,
+        ).data()
+    return rows
+
+
+def allowed_for_principal(
+    definition_id: str, principal_id: str | None, roles: List[str] | None = None
+) -> Dict[str, List[str]]:
+    """
+    Liefert die Union der erlaubten nodeIds/laneIds für einen Principal.
+    - Match, wenn principal_id in allowedPrincipals ODER irgendeine Rolle in allowedRoles.
+    - Wenn weder principal noch Rollen angegeben: leere Whitelist (kein Gating).
+    """
+    roles = roles or []
+    if not principal_id and not roles:
+        return {"nodeIds": [], "laneIds": []}
+
+    with _driver().session() as s:
+        rows = s.run(
+            """
+        MATCH (w:Whitelist {definitionId:$defs})-[:HAS_RULE]->(r:WhitelistRule)
+        WHERE ($principal IS NOT NULL AND $principal IN r.allowedPrincipals)
+           OR (size($roles) > 0 AND any(x IN $roles WHERE x IN r.allowedRoles))
+        RETURN collect(DISTINCT r.laneId) AS lanes, reduce(acc = [], n IN r.nodeIds | acc + n) AS nodes
+        """,
+            defs=definition_id,
+            principal=principal_id,
+            roles=roles,
+        ).data()
+
+    if not rows:
+        return {"nodeIds": [], "laneIds": []}
+    lanes = [l for l in (rows[0]["lanes"] or []) if l]
+    nodes = [n for n in (rows[0]["nodes"] or []) if n]
+    return {"nodeIds": list(sorted(set(nodes))), "laneIds": list(sorted(set(lanes)))}

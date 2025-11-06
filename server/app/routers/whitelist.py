@@ -9,7 +9,7 @@ from app.services.whitelist import (
     next_allowed,
 )
 
-router = APIRouter(prefix="/api/policy", tags=["Whitelist"])
+router = APIRouter(prefix="/api/policy")
 
 
 class WhitelistIn(BaseModel):

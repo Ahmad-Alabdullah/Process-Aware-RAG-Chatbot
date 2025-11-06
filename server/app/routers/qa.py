@@ -5,7 +5,7 @@ from app.services.retrieval import hybrid_search
 from app.services.llm import ollama_generate, hyde_rewrite
 from app.core.config import settings
 
-router = APIRouter(prefix="/api/qa", tags=["QA"])
+router = APIRouter(prefix="/api/qa")
 
 
 class AskBody(BaseModel):
@@ -24,12 +24,14 @@ class AskBody(BaseModel):
     model: str = settings.OLLAMA_MODEL
 
     # Whitelist-Gating
-    whitelist: bool = Field(False, description="Whitelist-Gating aktivieren")
-    process_id: Optional[str] = Field(None, description="BPMN Process ID fürs Gating")
-    principal_id: Optional[str] = Field(None, description="Principal/Benutzer/Rolle")
-    whitelist_ids: List[str] = Field(
-        default_factory=list, description="Explizite Whitelist-IDs"
+    whitelist: bool = False
+    process_id: Optional[str] = None
+    principal_id: Optional[str] = None
+    whitelist_ids: List[str] = Field(default_factory=list)
+    definition_id: Optional[str] = Field(
+        None, description="BPMN definitionsId (Gating)"
     )
+    roles: List[str] = Field(default_factory=list, description="Rollen des Principals")
 
 
 @router.post("/ask")
@@ -46,6 +48,8 @@ def ask(body: AskBody, request: Request):
         process_id=body.process_id,
         principal_id=principal_id,
         whitelist_ids=body.whitelist_ids or None,
+        definition_id=body.definition_id,
+        roles=body.roles or None,
     )
     context_text = "\n\n".join(f"- {c['text']}" for c in ctx)
     gating_hint = (
@@ -99,7 +103,7 @@ class RetrieveOut(BaseModel):
 @router.post(
     "/retrieve",
     response_model=RetrieveOut,
-    summary="Hybrid Retrieval (BM25+Vector) mit optionalem Whitelist-Gating",
+    summary="No-LLM Hybrid Retrieval (BM25+Vector) mit optionalem Whitelist-Gating",
 )
 def retrieve(body: RetrieveIn, request: Request):
     principal_from_header = request.headers.get("X-Principal-Id")

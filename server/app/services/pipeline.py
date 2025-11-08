@@ -138,6 +138,8 @@ def index_chunks(
     process_id: str | None = None,
     node_map: dict | None = None,
     lane_map: dict | None = None,
+    process_name: str | None = None,
+    tags: str | None = None,
 ):
     os_client = get_opensearch()
     qd = get_qdrant()
@@ -164,6 +166,8 @@ def index_chunks(
             **({"processId": process_id} if process_id else {}),
             **({"nodeId": node_id} if node_id else {}),
             **({"laneId": lane_id} if lane_id else {}),
+            **({"process_name": process_name} if process_name else {}),
+            **({"tags": tags} if tags else {}),
         }
 
         # --- OpenSearch ---
@@ -193,6 +197,8 @@ def index_chunks(
             "processId": process_id,
             "nodeId": node_id,
             "laneId": lane_id,
+            "process_name": process_name,
+            "tags": tags,
             **meta,
         }
         points.append(PointStruct(id=_uuid_for(doc_id, i), vector=v, payload=payload))
@@ -223,6 +229,8 @@ async def consume_uploads(r):
             for msg_id, fields in entries:
                 doc_id = fields.get("document_id")
                 p = Path(fields.get("path", "")).expanduser()
+                process_name = fields.get("process_name", "")
+                tags = fields.get("tags", "")
 
                 # optionale Prozess-/Mapping-Infos aus dem Stream
                 process_id = fields.get("process_id")  # z.B. "Process_BEM"
@@ -249,10 +257,17 @@ async def consume_uploads(r):
                             process_id=process_id,
                             node_map=node_map,
                             lane_map=lane_map,
+                            process_name=process_name,
+                            tags=tags,
                         )
                     await r.xadd(
                         "doc.indexed",
-                        {"document_id": doc_id, "chunks": str(len(parsed))},
+                        {
+                            "document_id": doc_id,
+                            "chunks": str(len(parsed)),
+                            "tags": tags,
+                            "process_name": process_name,
+                        },
                     )
                     await r.xack(stream, group, msg_id)
                 except Exception as e:

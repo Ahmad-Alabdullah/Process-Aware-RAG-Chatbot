@@ -11,7 +11,10 @@ UPLOAD_DIR = Path("/server/data/tmp_uploads")
 
 @router.post("/upload")
 async def upload_document(
-    file: UploadFile = File(...), source: str = Form("manual"), tags: str = Form("")
+    file: UploadFile = File(...),
+    source: str = Form("manual"),
+    tags: str = Form(""),
+    process_name: str = Form(""),
 ):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     doc_id = str(uuid.uuid4())
@@ -23,9 +26,22 @@ async def upload_document(
     r = get_redis()
     await r.xadd(
         "doc.uploaded",
-        {"document_id": doc_id, "path": dst, "source": source, "tags": tags},
+        {
+            "document_id": doc_id,
+            "file_name": file.filename,
+            "path": dst,
+            "source": source,
+            "tags": tags,
+            "process_name": process_name,
+        },
     )
-    return {"document_id": doc_id, "path": dst}
+    return {
+        "document_id": doc_id,
+        "file_name": file.filename,
+        "path": dst,
+        "tags": tags,
+        "process_name": process_name,
+    }
 
 
 @router.get("/documents")

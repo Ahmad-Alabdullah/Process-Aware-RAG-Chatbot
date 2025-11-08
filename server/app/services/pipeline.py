@@ -1,5 +1,5 @@
 import os, uuid, asyncio, json, re
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 from pathlib import Path
 
 from app.core.config import settings
@@ -33,24 +33,39 @@ def dehyphenize(text: str) -> str:
     return re.sub(r"[ \t]+\n", "\n", text)
 
 
+def _meta_to_dict(meta: Any) -> Dict[str, Any]:
+    if meta is None:
+        return {}
+    if isinstance(meta, dict):
+        return meta
+    # ElementMetadata etc.
+    if hasattr(meta, "to_dict"):
+        try:
+            return meta.to_dict() or {}
+        except Exception:
+            pass
+    # Fallback: zieh bekannte Felder per getattr
+    out = {}
+    for k in ("page_number", "section_title", "filename", "languages"):
+        if hasattr(meta, k):
+            out[k] = getattr(meta, k)
+    return out
+
+
 def extract_payload(el) -> dict:
-    meta = getattr(el, "metadata", {}) or {}
     txt = getattr(el, "text", "") or ""
     roles = [
         w for w in re.findall(r"[A-ZÄÖÜ]{3,}(?:-[A-ZÄÖÜ]{2,})?", txt) if w in ROLE_HINTS
     ]
-    # Unstructured-Elemente tragen page_number/section_title in .metadata (ElementMetadata)
-    page = (
-        getattr(meta, "page_number", None)
-        if hasattr(meta, "page_number")
-        else meta.get("page_number")
-    )
-    sect = (
-        getattr(meta, "section_title", None)
-        if hasattr(meta, "section_title")
-        else meta.get("section_title")
-    )
-    return {"page_number": page, "section_title": sect, "roles": list(set(roles))}
+
+    raw_meta = getattr(el, "metadata", None)
+    meta = _meta_to_dict(raw_meta)
+
+    return {
+        "page_number": meta.get("page_number"),
+        "section_title": meta.get("section_title"),
+        "roles": list(set(roles)),
+    }
 
 
 def parse_pdf(path: str) -> List[Tuple[str, dict]]:
@@ -62,7 +77,6 @@ def parse_pdf(path: str) -> List[Tuple[str, dict]]:
         max_characters=MAX_CHARS,
         new_after_n_chars=NEW_AFTER,
         overlap=OVERLAP,
-        coordinates=True,
         languages=OCR_LANGS.split("+"),
         infer_table_structure=True,
     )

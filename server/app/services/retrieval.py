@@ -15,91 +15,153 @@ def rrf(rank: int, k: Optional[int] = None) -> float:
     return 1.0 / (k + rank)
 
 
+def _terms(field: str, values):
+    """Hilfsfunktion: immer als Liste an `terms` übergeben, auf `.keyword` ausweichen."""
+    if values is None:
+        return None
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
+    values = [v for v in values if v is not None and v != ""]
+    if not values:
+        return None
+    # exakte Filter über `.keyword`
+    return {"terms": {f"{field}.keyword": list(values)}}
+
+
 def hybrid_search(
     q: str,
     k: int,
     *,
-    role: Optional[str] = None,
-    section: Optional[str] = None,
-    whitelist: bool = False,
-    process_id: Optional[str] = None,
-    principal_id: Optional[str] = None,
-    whitelist_ids: Optional[List[str]] = None,
-    definition_id: Optional[str] = None,
+    # optionale Filter
     roles: Optional[List[str]] = None,
+    process_name: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    # Whitelist-Gating
+    whitelist_enabled: bool = False,
+    lane_ids: Optional[List[str]] = None,
+    node_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     os_client = get_opensearch()
     qd = get_qdrant()
 
-    # --- 0) Whitelist-Auswertung (optional) ---
-    allow_node_ids: Set[str] = set()
-    allow_lane_ids: Set[str] = set()
+    # ---------- 1) OpenSearch: Volltext + Filter ----------
+    should = [
+        {
+            "multi_match": {
+                "query": q,
+                "fields": [
+                    "text^3",
+                    "meta.process_name^5",
+                    "meta.tags^2",
+                ],
+                "type": "best_fields",
+            }
+        }
+    ]
 
-    if whitelist:
-        if whitelist_ids:  # explizit
-            rows = allowed_nodes_union(process_id, whitelist_ids)
-            for r in rows:
-                if r.get("nodeId"):
-                    allow_node_ids.add(r["nodeId"])
-                if r.get("laneId"):
-                    allow_lane_ids.add(r["laneId"])
-        elif definition_id and (principal_id or roles):
-            # BPMN-Upload erzeugt Lane-Whitelist-Regeln;
-            rows = allowed_for_principal(definition_id, principal_id, roles or [])
-            for r in rows:
-                if r.get("nodeId"):
-                    allow_node_ids.add(r["nodeId"])
-                if r.get("laneId"):
-                    allow_lane_ids.add(r["laneId"])
+    os_filters: List[Dict[str, Any]] = []
 
-    # --- 1) BM25 (OpenSearch) ---
-    should = [{"match": {"text": q}}]
-    if role:
-        should.append({"match": {"meta.roles": role}})
-    if section:
-        should.append({"match": {"meta.section_title": section}})
+    t = _terms("meta.roles", roles)
+    if t:
+        os_filters.append(t)
 
-    # Filter aus Whitelist zusammenbauen (processId/nodeId/laneId)
-    os_filter = build_os_filter(
-        process_id=process_id,
-        node_ids=list(allow_node_ids) or None,
-        lane_ids=list(allow_lane_ids) or None,
-    )
+    t = _terms("meta.process_name", process_name)
+    if t:
+        os_filters.append(t)
+
+    t = _terms("meta.tags", tags)
+    if t:
+        os_filters.append(t)
+
+    if whitelist_enabled:
+        t = _terms("meta.lane_id", lane_ids)
+        if t:
+            os_filters.append(t)
+        t = _terms("meta.node_id", node_ids)
+        if t:
+            os_filters.append(t)
+
+    bool_query: Dict[str, Any] = {"should": should}
+    if os_filters:
+        bool_query["filter"] = os_filters
 
     os_resp = os_client.search(
         index=settings.OS_INDEX,
         body={
             "size": k * 5,
-            "query": {"bool": {"should": should, "filter": os_filter or []}},
+            "query": {"bool": bool_query},
         },
     )
     os_hits = os_resp["hits"]["hits"]
     os_rrf = {h["_id"]: rrf(i) for i, h in enumerate(os_hits, start=1)}
 
-    # --- 2) Vector (Qdrant) ---
-    from qdrant_client.http.models import Filter
+    # ---------- 2) Qdrant: Vektor + Payload-Filter ----------
+    from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 
-    qd_filter: Optional[Filter] = build_qdrant_filter(
-        process_id=process_id,
-        node_ids=list(allow_node_ids) or None,
-        lane_ids=list(allow_lane_ids) or None,
-    )
+    must_conditions = []
+    if roles:
+        must_conditions.append(
+            FieldCondition(
+                key="roles",
+                match=MatchValue(
+                    value=(
+                        roles[0]
+                        if isinstance(roles, list) and len(roles) == 1
+                        else roles
+                    )
+                ),
+            )
+        )
+    if process_name:
+        must_conditions.append(
+            FieldCondition(key="process_name", match=MatchValue(value=process_name))
+        )
+    if tags:
+        must_conditions.append(
+            FieldCondition(
+                key="tags",
+                match=MatchValue(
+                    value=tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
+                ),
+            )
+        )
+    if whitelist_enabled:
+        if lane_ids:
+            must_conditions.append(
+                FieldCondition(
+                    key="lane_id",
+                    match=MatchValue(
+                        value=lane_ids[0] if len(lane_ids) == 1 else lane_ids
+                    ),
+                )
+            )
+        if node_ids:
+            must_conditions.append(
+                FieldCondition(
+                    key="node_id",
+                    match=MatchValue(
+                        value=node_ids[0] if len(node_ids) == 1 else node_ids
+                    ),
+                )
+            )
+
+    qfilter = Filter(must=must_conditions) if must_conditions else None
 
     vec = embed_texts([q])[0]
     qd_hits = qd.search(
         collection_name=settings.QDRANT_COLLECTION,
         query_vector=vec,
         limit=k * 5,
-        query_filter=qd_filter,
+        query_filter=qfilter,
         with_payload=True,
     )
 
-    qd_rrf = {}
+    qd_rrf: Dict[str, float] = {}
     for i, p in enumerate(qd_hits, start=1):
         cid = (p.payload or {}).get("chunk_id") or str(p.id)
         qd_rrf[cid] = rrf(i)
 
-    # --- 3) RRF + 4) mget ---
+    # ---------- 3) Fusion ----------
     fused = os_rrf.copy()
     for cid, s in qd_rrf.items():
         fused[cid] = fused.get(cid, 0.0) + s
@@ -107,10 +169,18 @@ def hybrid_search(
     top_ids = [
         cid for cid, _ in sorted(fused.items(), key=lambda x: x[1], reverse=True)[:k]
     ]
+
+    # ---------- 4) Quellen nachladen ----------
     mget = os_client.mget(index=settings.OS_INDEX, body={"ids": top_ids})
     docs_by_id = {d["_id"]: d["_source"] for d in mget["docs"] if d.get("found")}
-    return [
-        {"chunk_id": cid, "score": fused[cid], **docs_by_id.get(cid, {})}
-        for cid in top_ids
-        if docs_by_id.get(cid)
-    ]
+
+    results: List[Dict[str, Any]] = []
+    for cid in top_ids:
+        src = docs_by_id.get(cid)
+        if not src:
+            try:
+                src = os_client.get(index=settings.OS_INDEX, id=cid)["_source"]
+            except Exception:
+                continue
+        results.append({"chunk_id": cid, "score": fused.get(cid, 0.0), **src})
+    return results

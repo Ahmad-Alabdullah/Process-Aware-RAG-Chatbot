@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from app.services.whitelist import (
     WhitelistSpec,
+    allowed_for_principal,
     upsert_whitelist,
-    whitelists_for_principal,
     next_allowed,
 )
 
@@ -22,6 +22,13 @@ class WhitelistIn(BaseModel):
     principals: List[str] = []
 
 
+class AllowedForPrincipalOut(BaseModel):
+    definition_id: str
+    roles: List[str]
+    node_ids: List[str]
+    lane_ids: List[str]
+
+
 @router.post("/whitelists", summary="Create/replace a whitelist")
 def create_whitelist(body: WhitelistIn):
     try:
@@ -32,21 +39,9 @@ def create_whitelist(body: WhitelistIn):
         raise HTTPException(status_code=500, detail=f"whitelist upsert failed: {e}")
 
 
-@router.get(
-    "/principals/{principal_id}/whitelists",
-    summary="List whitelist IDs bound to a principal",
-)
-def list_whitelists_for_principal(principal_id: str):
-    return {
-        "principal": principal_id,
-        "whitelists": whitelists_for_principal(principal_id),
-    }
-
-
 class NextAllowedIn(BaseModel):
     process_id: str
     current_node_id: str
-    principal_id: Optional[str] = None
     whitelist_ids: List[str] = []
     max_depth: int = 1
 
@@ -56,8 +51,6 @@ class NextAllowedIn(BaseModel):
 )
 def compute_next_allowed(body: NextAllowedIn):
     wids = list(body.whitelist_ids)
-    if body.principal_id:
-        wids.extend(whitelists_for_principal(body.principal_id))
     if not wids:
         return {"ok": True, "next": []}
     try:
@@ -65,3 +58,22 @@ def compute_next_allowed(body: NextAllowedIn):
         return {"ok": True, "next": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"next-allowed failed: {e}")
+
+
+@router.get(
+    "/definitions/{definition_id}/allowed",
+    response_model=AllowedForPrincipalOut,
+    summary="Aggregierte erlaubte Nodes/Lanes für Principal/Rollen (UI-Overlay)",
+)
+def get_allowed_for_principal(
+    definition_id: str,
+    roles: Optional[str] = None,
+):
+    role_list = [r.strip() for r in (roles or "").split(",") if r.strip()]
+    res = allowed_for_principal(definition_id, role_list)
+    return AllowedForPrincipalOut(
+        definition_id=definition_id,
+        roles=role_list,
+        node_ids=res["nodeIds"],
+        lane_ids=res["laneIds"],
+    )

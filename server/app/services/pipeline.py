@@ -7,6 +7,7 @@ from app.core.clients import get_opensearch, get_qdrant
 from sentence_transformers import SentenceTransformer
 import requests
 from unstructured.partition.pdf import partition_pdf
+from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 
 # =========================
 # Chunking & OCR Parameter
@@ -149,37 +150,21 @@ def index_chunks(
     doc_id: str,
     chunks: List[Tuple[str, dict]],
     *,
-    process_id: str | None = None,
-    node_map: dict | None = None,
-    lane_map: dict | None = None,
     process_name: str | None = None,
     tags: str | None = None,
 ):
     os_client = get_opensearch()
     qd = get_qdrant()
-    node_map = node_map or {}
-    lane_map = lane_map or {}
 
     texts = [t for t, _ in chunks]
     vectors = embed_texts(texts)
 
     for i, (t, meta) in enumerate(chunks):
         page = meta.get("page_number")
-        node_id = None
-        lane_id = None
-
-        # Heuristik: mappe Seite -> Node; Node -> Lane
-        if page is not None:
-            node_id = node_map.get(str(page)) or node_map.get(int(page), None)
-        if node_id:
-            lane_id = lane_map.get(node_id)
 
         # erweiterte Meta/Payload
         os_meta = {
             **meta,
-            **({"processId": process_id} if process_id else {}),
-            **({"nodeId": node_id} if node_id else {}),
-            **({"laneId": lane_id} if lane_id else {}),
             **({"process_name": process_name} if process_name else {}),
             **({"tags": tags} if tags else {}),
         }
@@ -196,27 +181,73 @@ def index_chunks(
 
     points = []
     for i, ((t, meta), v) in enumerate(zip(chunks, vectors)):
-        page = meta.get("page_number")
-        node_id = (
-            node_map.get(str(page)) or node_map.get(int(page), None)
-            if page is not None
-            else None
-        )
-        lane_id = lane_map.get(node_id) if node_id else None
 
         payload = {
             "document_id": doc_id,
             "text": t,
             "chunk_id": f"{doc_id}:{i}",
-            "processId": process_id,
-            "nodeId": node_id,
-            "laneId": lane_id,
             "process_name": process_name,
             "tags": tags,
             **meta,
         }
         points.append(PointStruct(id=_uuid_for(doc_id, i), vector=v, payload=payload))
     qd.upsert(collection_name=settings.QDRANT_COLLECTION, points=points)
+
+
+def delete_all_chunks_opensearch() -> int:
+    """
+    Löscht ALLE Dokument-Chunks aus dem OpenSearch-Index.
+    """
+    os_client = get_opensearch()
+    resp = os_client.delete_by_query(
+        index=settings.OS_INDEX,
+        body={"query": {"match_all": {}}},
+    )
+    return int(resp.get("deleted", 0))
+
+
+def delete_chunks_by_process_opensearch(process_name: str) -> int:
+    """
+    Löscht alle Chunks mit meta.process_name == process_name aus OpenSearch.
+    """
+    os_client = get_opensearch()
+    resp = os_client.delete_by_query(
+        index=settings.OS_INDEX,
+        body={"query": {"terms": {"meta.process_name.keyword": [process_name]}}},
+    )
+    return int(resp.get("deleted", 0))
+
+
+def delete_all_chunks_qdrant() -> None:
+    """
+    Löscht ALLE Punkte aus der Qdrant-Collection.
+
+    Implementiert als: Collection droppen und via ensure_indices() neu anlegen.
+    """
+    qd = get_qdrant()
+    try:
+        qd.delete_collection(settings.QDRANT_COLLECTION)
+    except Exception:
+        pass
+    ensure_indices()
+
+
+def delete_chunks_by_process_qdrant(process_name: str) -> None:
+    """
+    Löscht alle Punkte aus Qdrant, deren payload.process_name == process_name ist.
+    """
+    qd = get_qdrant()
+    qd.delete(
+        collection_name=settings.QDRANT_COLLECTION,
+        filter=Filter(
+            must=[
+                FieldCondition(
+                    key="process_name",
+                    match=MatchValue(value=process_name),
+                )
+            ]
+        ),
+    )
 
 
 # --- Background consumer (Redis Streams) ---
@@ -246,18 +277,6 @@ async def consume_uploads(r):
                 process_name = fields.get("process_name", "")
                 tags = fields.get("tags", "")
 
-                # optionale Prozess-/Mapping-Infos aus dem Stream
-                process_id = fields.get("process_id")  # z.B. "Process_BEM"
-                node_map_json = fields.get(
-                    "node_map"
-                )  # JSON: {"1": "Task_X", "2": "Task_Y"} (page -> nodeId)
-                lane_map_json = fields.get(
-                    "lane_map"
-                )  # JSON: {"Task_X": "Lane_HR", ...}
-
-                node_map = json.loads(node_map_json) if node_map_json else {}
-                lane_map = json.loads(lane_map_json) if lane_map_json else {}
-
                 try:
                     if not p.exists():
                         raise FileNotFoundError(f"Upload file missing: {p}")
@@ -268,9 +287,6 @@ async def consume_uploads(r):
                         index_chunks(
                             doc_id,
                             parsed,
-                            process_id=process_id,
-                            node_map=node_map,
-                            lane_map=lane_map,
                             process_name=process_name,
                             tags=tags,
                         )

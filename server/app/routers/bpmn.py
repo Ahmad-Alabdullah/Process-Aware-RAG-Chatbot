@@ -1,5 +1,10 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from app.services.bpmn_store import import_bpmn_xml_and_whitelist
+from app.services.bpmn_store import (
+    import_bpmn_xml_and_whitelist,
+    list_definitions,
+    list_process_nodes_lanes,
+    process_graph,
+)
 
 router = APIRouter(prefix="/api/bpmn")
 
@@ -47,3 +52,22 @@ def get_whitelist(definition_id: str):
         "rules": rules,
         "count": len(rules),
     }
+
+
+@router.get("/definitions", summary="Alle BPMN-Definitionen + Prozesse")
+def get_definitions():
+    return {"ok": True, "definitions": list_definitions()}
+
+
+@router.get("/processes/{process_id}/combo", summary="Nodes/Lanes für UI-Comboboxen")
+def get_process_combo(process_id: str):
+    data = list_process_nodes_lanes(process_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Prozess nicht gefunden")
+    return {"ok": True, **data}
+
+
+@router.get("/processes/{process_id}/graph", summary="Prozessgraph (Nodes + Edges)")
+def get_process_graph(process_id: str):
+    g = process_graph(process_id)
+    return {"ok": True, **g}

@@ -43,10 +43,6 @@ def ensure_schema():
             """CREATE CONSTRAINT whitelist_id_unique IF NOT EXISTS
                  FOR (w:Whitelist) REQUIRE w.id IS UNIQUE"""
         )
-        s.run(
-            """CREATE CONSTRAINT principal_id_unique IF NOT EXISTS
-                 FOR (p:Principal) REQUIRE p.id IS UNIQUE"""
-        )
 
 
 # ---------- Upsert Whitelist ----------
@@ -120,19 +116,6 @@ def upsert_whitelist(spec: WhitelistSpec) -> dict:
         )
 
         return {"id": spec.id}
-
-
-# ---------- Resolve principal -> whitelist ids ----------
-def whitelists_for_principal(principal_id: str) -> List[str]:
-    with _driver().session() as s:
-        rows = s.run(
-            """
-        MATCH (p:Principal {id:$pid})-[:USES]->(w:Whitelist)
-        RETURN w.id AS id
-        """,
-            pid=principal_id,
-        ).values()
-        return [r[0] for r in rows]
 
 
 # ---------- Allowed Node IDs for a whitelist ----------
@@ -326,32 +309,35 @@ def list_whitelist_rules(definition_id: str) -> List[Dict]:
 
 
 def allowed_for_principal(
-    definition_id: str, principal_id: str | None, roles: List[str] | None = None
+    definition_id: str,
+    roles: List[str] | None = None,
 ) -> Dict[str, List[str]]:
     """
-    Liefert die Union der erlaubten nodeIds/laneIds für einen Principal.
-    - Match, wenn principal_id in allowedPrincipals ODER irgendeine Rolle in allowedRoles.
-    - Wenn weder principal noch Rollen angegeben: leere Whitelist (kein Gating).
+    Aggregiert erlaubte Lane- und Node-IDs ausschließlich rollenbasiert.
     """
     roles = roles or []
-    if not principal_id and not roles:
+    if not roles:
         return {"nodeIds": [], "laneIds": []}
 
     with _driver().session() as s:
         rows = s.run(
             """
-        MATCH (w:Whitelist {definitionId:$defs})-[:HAS_RULE]->(r:WhitelistRule)
-        WHERE ($principal IS NOT NULL AND $principal IN r.allowedPrincipals)
-           OR (size($roles) > 0 AND any(x IN $roles WHERE x IN r.allowedRoles))
-        RETURN collect(DISTINCT r.laneId) AS lanes, reduce(acc = [], n IN r.nodeIds | acc + n) AS nodes
-        """,
+            MATCH (w:Whitelist {definitionId:$defs})-[:HAS_RULE]->(r:WhitelistRule)
+            WHERE size($roles) > 0 AND any(x IN $roles WHERE x IN r.allowedRoles)
+            RETURN collect(DISTINCT r.laneId) AS lanes,
+                   reduce(acc = [], n IN r.nodeIds | acc + n) AS nodes
+            """,
             defs=definition_id,
-            principal=principal_id,
             roles=roles,
         ).data()
 
     if not rows:
         return {"nodeIds": [], "laneIds": []}
+
     lanes = [l for l in (rows[0]["lanes"] or []) if l]
     nodes = [n for n in (rows[0]["nodes"] or []) if n]
-    return {"nodeIds": list(sorted(set(nodes))), "laneIds": list(sorted(set(lanes)))}
+
+    return {
+        "nodeIds": sorted(set(nodes)),
+        "laneIds": sorted(set(lanes)),
+    }

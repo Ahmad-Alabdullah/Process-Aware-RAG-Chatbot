@@ -3,6 +3,12 @@ import os, uuid, shutil, json
 import aiofiles
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from app.core.clients import get_redis
+from app.services.pipeline import (
+    delete_all_chunks_opensearch,
+    delete_all_chunks_qdrant,
+    delete_chunks_by_process_opensearch,
+    delete_chunks_by_process_qdrant,
+)
 
 router = APIRouter()
 
@@ -46,7 +52,36 @@ async def upload_document(
 
 @router.get("/documents")
 async def list_documents():
-    # Minimal: nur Dateiliste des Upload-Verzeichnisses
     if not os.path.exists(UPLOAD_DIR):
         return []
     return [{"file": p} for p in os.listdir(UPLOAD_DIR)]
+
+
+@router.delete("/all", summary="Alle Chunks in OS & Qdrant löschen")
+def delete_all_chunks():
+    deleted_os = delete_all_chunks_opensearch()
+    delete_all_chunks_qdrant()
+    return {
+        "ok": True,
+        "opensearch_deleted": deleted_os,
+        "qdrant": "collection dropped & recreated",
+    }
+
+
+@router.delete(
+    "/process/{process_name}",
+    summary="Alle Chunks zu einem process_name in OS & Qdrant löschen",
+)
+def delete_chunks_by_process(process_name: str):
+    if not process_name:
+        raise HTTPException(status_code=400, detail="process_name darf nicht leer sein")
+
+    deleted_os = delete_chunks_by_process_opensearch(process_name)
+    delete_chunks_by_process_qdrant(process_name)
+
+    return {
+        "ok": True,
+        "process_name": process_name,
+        "opensearch_deleted": deleted_os,
+        "qdrant": "delete by filter(process_name) requested",
+    }

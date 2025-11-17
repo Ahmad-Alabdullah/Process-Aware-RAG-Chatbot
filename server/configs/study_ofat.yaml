@@ -1,0 +1,37 @@
+baseline: "configs/baseline.yaml"
+variants:
+  - name: "OFAT_llm_llama3.1_8b"               # LLM
+    override: {qa_payload: {model: "qwen2.5:7b-instruct"}}
+  - name: "OFAT_llm_mistral_nemo"
+    override: {qa_payload: {model: "mistral-7B-Instruct"}}
+
+  - name: "OFAT_emb_mpnet"                      # Embeddings → separater Index (neues dataset)
+    override: {dataset: "demo_mpnet"}
+  - name: "OFAT_emb_minilm_multilingual"
+    override: {dataset: "demo_minilm_multilingual"}
+
+  - name: "OFAT_k3"                              # k
+    override: {qa_payload: {top_k: 3}}
+  - name: "OFAT_k8"
+    override: {qa_payload: {top_k: 8}}
+
+  - name: "OFAT_rrf_k30"                         # RRF_K
+    override: {factors: {retrieval: {rrf_k: 30}}}
+  - name: "OFAT_rrf_k90"
+    override: {factors: {retrieval: {rrf_k: 90}}}
+
+  - name: "OFAT_ce_on_minilm6"                   # Reranker
+    override: {factors: {rerank: {ce: true, ce_model: "cross-encoder/ms-marco-MiniLM-L-6-v2", topN: 50, topk_prompt: 5}}}
+
+  - name: "OFAT_repacking_reverse"               # Repacking
+    override: {factors: {prompt: {repacking: "reverse"}}}
+
+  - name: "OFAT_prompt_fewshot"                  # Promptstil
+    override: {factors: {prompt: {style: "fewshot"}}}
+  - name: "OFAT_prompt_cot"
+    override: {factors: {prompt: {style: "cot", self_critique: true}}}
+
+  - name: "OFAT_chunk_900_150"                   # Chunk‑Profile (Indexwechsel → neues dataset)
+    override: {dataset: "demo_c900_o150"}
+  - name: "OFAT_chunk_1200_200"
+    override: {dataset: "demo_c1200_o200"}

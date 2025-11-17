@@ -1,0 +1,16 @@
+baseline: "configs/baseline.yaml"
+factors:
+  A_llm:
+    - {qa_payload: {model: "qwen2.5:7b-instruct"}}
+    - {qa_payload: {model: "mistral-7B-Instruct"}}
+  B_reranker:
+    - {factors: {rerank: {ce: false}}}
+    - {factors: {rerank: {ce: true, ce_model: "cross-encoder/ms-marco-MiniLM-L-6-v2", topN: 50, topk_prompt: 3}}}
+  C_k:
+    - {qa_payload: {top_k: 3}}
+    - {qa_payload: {top_k: 5}}
+  D_repacking:
+    - {factors: {prompt: {repacking: "default"}}}
+    - {factors: {prompt: {repacking: "reverse"}}}
+design: "fractional"
+resolution: 4

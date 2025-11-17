@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 from datetime import datetime
 import uuid
 from defusedxml import ElementTree as ET
@@ -244,3 +244,109 @@ def import_bpmn_xml_and_whitelist(
         "hasDiagram": bool(has_di),
         "whitelist": wl_counts,
     }
+
+
+def list_definitions() -> List[Dict[str, Any]]:
+    driver = get_neo4j()
+    with driver.session() as s:
+        rows = s.run(
+            """
+            MATCH (d:BPMN)
+            OPTIONAL MATCH (d)-[:CONTAINS]->(p:Process)
+            WITH d, collect({id:p.xmlId, name:p.name}) AS processes
+            RETURN d.definitionId AS id,
+                   d.name AS name,
+                   d.filename AS filename,
+                   size(processes) AS processCount,
+                   processes
+            ORDER BY name, id
+            """
+        ).data()
+    return rows
+
+
+def list_process_nodes_lanes(process_id: str) -> Dict[str, Any]:
+    driver = get_neo4j()
+    with driver.session() as s:
+        data = s.run(
+            """
+            MATCH (p:Process {xmlId:$pid})
+            OPTIONAL MATCH (p)-[:HAS_LANE]->(l:Lane)
+            OPTIONAL MATCH (p)-[:CONTAINS]->(n:Node)
+            OPTIONAL MATCH (l)-[:CONTAINS]->(n2:Node)
+            WITH p,
+                 collect(DISTINCT {id:l.xmlId, name:l.name}) AS lanes,
+                 collect(DISTINCT {
+                     id:n.xmlId,
+                     name:n.name,
+                     type:n.type
+                 }) AS nodes1,
+                 collect(DISTINCT {
+                     id:n2.xmlId,
+                     name:n2.name,
+                     type:n2.type,
+                     laneId: l.xmlId
+                 }) AS nodes2
+            WITH p, lanes,
+                 apoc.coll.toSet(nodes1 + nodes2) AS nodes
+            RETURN p.xmlId AS id,
+                   p.name AS name,
+                   lanes,
+                   nodes
+            """,
+            pid=process_id,
+        ).single()
+    if not data:
+        return {}
+    return data
+
+
+def process_graph(process_id: str) -> Dict[str, Any]:
+    driver = get_neo4j()
+    with driver.session() as s:
+        nodes = s.run(
+            """
+            MATCH (p:Process {xmlId:$pid})-[:CONTAINS]->(n:Node)
+            OPTIONAL MATCH (l:Lane)-[:CONTAINS]->(n)
+            RETURN n.xmlId AS id, n.name AS name, n.type AS type,
+                   l.xmlId AS laneId
+            """,
+            pid=process_id,
+        ).data()
+        edges = s.run(
+            """
+            MATCH (p:Process {xmlId:$pid})-[:CONTAINS]->(:Node)-[f:FLOWS_TO]->(m:Node)
+            RETURN f.xmlId AS id,
+                   startNode(f).xmlId AS source,
+                   endNode(f).xmlId AS target
+            """,
+            pid=process_id,
+        ).data()
+    return {"nodes": nodes, "edges": edges}
+
+
+def lane_and_task_labels(
+    process_id: str, lane_ids: List[str], node_ids: List[str]
+) -> Dict[str, List[str]]:
+    driver = get_neo4j()
+    with driver.session() as s:
+        lanes = s.run(
+            """
+            MATCH (p:Process {xmlId:$pid})-[:HAS_LANE]->(l:Lane)
+            WHERE l.xmlId IN $lane_ids
+            RETURN l.xmlId AS id, l.name AS name
+            """,
+            pid=process_id,
+            lane_ids=lane_ids,
+        ).data()
+
+        tasks = s.run(
+            """
+            MATCH (p:Process {xmlId:$pid})-[:CONTAINS]->(n:Node)
+            WHERE n.xmlId IN $node_ids
+            RETURN n.xmlId AS id, n.name AS name, n.type AS type
+            """,
+            pid=process_id,
+            node_ids=node_ids,
+        ).data()
+    return {"lanes": lanes, "tasks": tasks}

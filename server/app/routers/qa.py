@@ -76,7 +76,7 @@ def ask(body: AskBody, request: Request):
         )
 
         gating_hint = f"""
-        Du beantwortest die Frage im Kontext des Prozesses '{body.process_name}'.
+        Du beantwortest die Frage im Kontext des Prozesses '{body.process_name}, der in BPMN modelliert ist'.
         Die Nutzerrolle(n): {", ".join(body.roles or [])}.
 
         Antworte nur zu Schritten, die folgenden Lanes zugeordnet sind:

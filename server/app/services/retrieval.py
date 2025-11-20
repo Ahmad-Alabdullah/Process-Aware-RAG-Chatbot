@@ -81,7 +81,7 @@ def hybrid_search(
     os_rrf = {h["_id"]: rrf(i) for i, h in enumerate(os_hits, start=1)}
 
     # ---------- 2) Qdrant: Vektor + Payload-Filter ----------
-    from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+    from qdrant_client.http.models import Filter, FieldCondition, MatchValue, MatchAny
 
     must_conditions = []
     if process_name:
@@ -89,12 +89,15 @@ def hybrid_search(
             FieldCondition(key="process_name", match=MatchValue(value=process_name))
         )
     if tags:
+        if isinstance(tags, str):
+            tags_list = [tags]
+        else:
+            tags_list = list(tags)
+
         must_conditions.append(
             FieldCondition(
                 key="tags",
-                match=MatchValue(
-                    value=tags[0] if isinstance(tags, list) and len(tags) == 1 else tags
-                ),
+                match=MatchAny(any=tags_list),
             )
         )
 

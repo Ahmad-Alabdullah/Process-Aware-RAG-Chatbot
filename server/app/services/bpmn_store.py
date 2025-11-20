@@ -350,3 +350,78 @@ def lane_and_task_labels(
             node_ids=node_ids,
         ).data()
     return {"lanes": lanes, "tasks": tasks}
+
+
+def local_process_view(
+    process_id: str,
+    current_node_id: str,
+    max_depth: int = 2,
+) -> Dict[str, Any]:
+    """
+    Liefert eine lokale Ansicht rund um den aktuellen BPMN-Knoten:
+    - current: aktueller Node inkl. Lane
+    - predecessors: Vorgänger (bis max_depth Hops)
+    - successors: Nachfolger (bis max_depth Hops)
+
+    Jede Node-Struktur enthält: {id, name, type, laneId, laneName}.
+    """
+    driver = get_neo4j()
+    with driver.session() as s:
+        rec = s.run(
+            """
+            MATCH (p:Process {xmlId:$pid})-[:CONTAINS]->(center:Node {xmlId:$nid})
+
+            // Nachfolger sammeln
+            OPTIONAL MATCH (center)-[:FLOWS_TO*1..2]->(succ:Node)
+            WITH center, collect(DISTINCT succ) AS succs
+
+            // Vorgänger sammeln
+            OPTIONAL MATCH (pred:Node)-[:FLOWS_TO*1..2]->(center)
+            WITH center,
+                 coalesce(succs, []) AS succs,
+                 collect(DISTINCT pred) AS preds
+
+            // Vorgänger mit ihren Lanes
+            UNWIND coalesce(preds, []) AS pn
+            OPTIONAL MATCH (lp:Lane)-[:CONTAINS]->(pn)
+            WITH center, succs,
+                 collect(DISTINCT {
+                     id: pn.xmlId,
+                     name: pn.name,
+                     type: pn.type,
+                     laneId: lp.xmlId,
+                     laneName: lp.name
+                 }) AS pred_nodes
+
+            // Nachfolger mit ihren Lanes
+            UNWIND coalesce(succs, []) AS sn
+            OPTIONAL MATCH (ls:Lane)-[:CONTAINS]->(sn)
+            WITH center, pred_nodes,
+                 collect(DISTINCT {
+                     id: sn.xmlId,
+                     name: sn.name,
+                     type: sn.type,
+                     laneId: ls.xmlId,
+                     laneName: ls.name
+                 }) AS succ_nodes
+
+            // Lane des aktuellen Knotens
+            OPTIONAL MATCH (lc:Lane)-[:CONTAINS]->(center)
+            RETURN {
+                id: center.xmlId,
+                name: center.name,
+                type: center.type,
+                laneId: lc.xmlId,
+                laneName: lc.name
+            } AS current,
+            pred_nodes AS predecessors,
+            succ_nodes AS successors
+            """,
+            pid=process_id,
+            nid=current_node_id,
+            d=max_depth,
+        ).single()
+
+    if not rec:
+        return {}
+    return rec

@@ -39,6 +39,17 @@ services:
     volumes:
       - "osdata:/usr/share/opensearch/data"
 
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:latest
+    container_name: opensearch-dashboards
+    ports:
+      - "5601:5601"
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    depends_on:
+      - opensearch
+
   qdrant:
     image: qdrant/qdrant:latest
     ports:

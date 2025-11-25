@@ -1,4 +1,4 @@
-from server.app.routers.qa import AskBody
+from app.core.models.askModel import AskBody
 
 
 def build_prompt(

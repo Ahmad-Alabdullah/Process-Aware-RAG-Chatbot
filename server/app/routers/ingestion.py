@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import List
 import os, uuid, shutil, json
 import aiofiles
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
@@ -8,7 +9,10 @@ from app.services.pipeline import (
     delete_all_chunks_qdrant,
     delete_chunks_by_process_opensearch,
     delete_chunks_by_process_qdrant,
+    ensure_indices,
+    index_chunks,
 )
+from app.core.models.manualChunk import ManualChunk
 
 router = APIRouter()
 
@@ -84,4 +88,36 @@ def delete_chunks_by_process(process_name: str):
         "process_name": process_name,
         "opensearch_deleted": deleted_os,
         "qdrant": "delete by filter(process_name) requested",
+    }
+
+
+@router.post("/chunks/manual")
+def index_manual_chunks(chunks: List[ManualChunk]):
+    """
+    Manuelles Indexieren von Text-Chunks in OpenSearch + Qdrant.
+
+    Jeder Eintrag entspricht genau einem Chunk (text + meta),
+    der unter der angegebenen document_id gespeichert wird.
+    """
+    if not chunks:
+        raise HTTPException(
+            status_code=400, detail="Payload 'chunks' darf nicht leer sein."
+        )
+
+    ensure_indices()
+
+    indexed = 0
+    for c in chunks:
+        # pro Eintrag genau einen Chunk
+        index_chunks(
+            doc_id=c.document_id,
+            chunks=[(c.text, c.meta)],
+            process_name=c.process_name,
+            tags=c.tags,
+        )
+        indexed += 1
+
+    return {
+        "ok": True,
+        "indexed_chunks": indexed,
     }

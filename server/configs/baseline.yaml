@@ -6,29 +6,23 @@ qa_payload:
   query: null
   top_k: 5
   use_hyde: false
-  model: "llama3.1:8b"
-  processName: null
-  processId: null
+  model: "qwen2.5:7b-instruct"
+  process_name: null    
+  process_id: null        
   roles: []
-  whitelistOnly: true
-  gating_hint: ""
+  whitelist_enabled: true 
+  tags: []
+  prompt_style: "baseline"
+  gating_hint: ""         
   debug_return: true
 
 factors:
   retrieval: {mode: "hybrid", rrf_k: 60}
   rerank: {ce: false, topN: 50, topk_prompt: 5}
-  chunking: {max_characters: 1200, new_after_n_chars: 900, overlap: 150, strategy: "by_title"}
+  chunking: {max_characters: 1800, new_after_n_chars: 1350, overlap: 225, strategy: "by_title"}
   embeddings: {model: "all-minilm"}
   prompt:
     style: "baseline"
-    template: |
-      Beantworte die Frage basierend auf dem Kontext.{gating_hint}
-
-      Frage: {body.query}
-
-      Kontext:{context_text}
-
-      Antwort (deutsch, mit kurzen Belegen wenn möglich):
 
 logging:
   save_prompt: true

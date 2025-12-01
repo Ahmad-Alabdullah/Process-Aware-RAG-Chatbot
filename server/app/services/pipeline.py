@@ -3,19 +3,11 @@ from typing import Any, Dict, List, Tuple
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.clients import get_opensearch, get_qdrant
+from app.core.clients import get_opensearch, get_qdrant, get_logger
 from sentence_transformers import SentenceTransformer
 import requests
 from unstructured.partition.pdf import partition_pdf
 from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-
-# =========================
-# Chunking & OCR Parameter
-# =========================
-MAX_CHARS = int(os.environ.get("MAX_CHARACTERS", "1200"))
-NEW_AFTER = int(os.environ.get("NEW_AFTER_N_CHARS", "900"))
-OVERLAP = int(os.environ.get("OVERLAP", "150"))
-OCR_LANGS = os.environ.get("OCR_LANGUAGES", "deu+eng")
 
 ROLE_HINTS = [
     "PRÜFUNGSSTELLE",
@@ -25,6 +17,8 @@ ROLE_HINTS = [
     "DEKANAT",
     "SENAT",
 ]
+
+logger = get_logger(__name__)
 
 
 def dehyphenize(text: str) -> str:
@@ -62,11 +56,32 @@ def extract_payload(el) -> dict:
     raw_meta = getattr(el, "metadata", None)
     meta = _meta_to_dict(raw_meta)
 
+    # Tabellenspezifische Metadaten extrahieren
+    element_type = type(el).__name__
+    table_html = None
+    if element_type == "Table" and hasattr(el, "metadata"):
+        # HTML-Repräsentation der Tabelle (falls vorhanden)
+        table_html = getattr(el.metadata, "text_as_html", None)
+
     return {
         "page_number": meta.get("page_number"),
         "section_title": meta.get("section_title"),
         "roles": list(set(roles)),
+        "element_type": element_type,
+        "table_html": table_html,
     }
+
+
+def _table_html_to_text(html: str) -> str:
+    """Konvertiert HTML-Tabelle in lesbaren Text."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    rows = []
+    for tr in soup.find_all("tr"):
+        cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+        rows.append(" | ".join(cells))
+    return "\n".join(rows)
 
 
 def parse_pdf(path: str) -> List[Tuple[str, dict]]:
@@ -75,15 +90,26 @@ def parse_pdf(path: str) -> List[Tuple[str, dict]]:
         filename=str(path),
         strategy="hi_res",  # Layout-/OCR-Pipeline
         chunking_strategy="by_title",  # Titelgrenzen respektieren
-        max_characters=MAX_CHARS,
-        new_after_n_chars=NEW_AFTER,
-        overlap=OVERLAP,
-        languages=OCR_LANGS.split("+"),
+        max_characters=settings.MAX_CHARACTERS,
+        new_after_n_chars=settings.NEW_AFTER_N_CHARS,
+        overlap=settings.OVERLAP,
+        languages=settings.OCR_LANGUAGES.split(","),
         infer_table_structure=True,
+        skip_infer_table_types=[],
     )
     chunks: List[Tuple[str, dict]] = []
     for el in elements:
         txt = dehyphenize(getattr(el, "text", "") or "")
+
+        # Bei Tabellen: strukturierten Text bevorzugen
+        element_type = type(el).__name__
+        if element_type == "Table":
+            logger.info("Table detected")
+            # Falls HTML vorhanden, in Markdown-ähnlichen Text konvertieren
+            html = getattr(getattr(el, "metadata", None), "text_as_html", None)
+            if html:
+                txt = _table_html_to_text(html) or txt
+
         if not txt.strip():
             continue
         payload = extract_payload(el)
@@ -152,6 +178,7 @@ def index_chunks(
     *,
     process_name: str | None = None,
     tags: str | None = None,
+    file_name: str | None = None,
 ):
     os_client = get_opensearch()
     qd = get_qdrant()
@@ -167,6 +194,7 @@ def index_chunks(
             **meta,
             **({"process_name": process_name} if process_name else {}),
             **({"tags": tags} if tags else {}),
+            **({"file_name": file_name} if file_name else {}),
         }
 
         # --- OpenSearch ---
@@ -188,6 +216,7 @@ def index_chunks(
             "chunk_id": f"{doc_id}:{i}",
             "process_name": process_name,
             "tags": tags,
+            "file_name": file_name,
             **meta,
         }
         points.append(PointStruct(id=_uuid_for(doc_id, i), vector=v, payload=payload))
@@ -237,9 +266,9 @@ def delete_chunks_by_process_qdrant(process_name: str) -> None:
     Löscht alle Punkte aus Qdrant, deren payload.process_name == process_name ist.
     """
     qd = get_qdrant()
-    qd.delete(
+    return qd.delete(
         collection_name=settings.QDRANT_COLLECTION,
-        filter=Filter(
+        points_selector=Filter(
             must=[
                 FieldCondition(
                     key="process_name",
@@ -276,6 +305,7 @@ async def consume_uploads(r):
                 p = Path(fields.get("path", "")).expanduser()
                 process_name = fields.get("process_name", "")
                 tags = fields.get("tags", "")
+                file_name = fields.get("file_name", "")
 
                 try:
                     if not p.exists():
@@ -289,6 +319,7 @@ async def consume_uploads(r):
                             parsed,
                             process_name=process_name,
                             tags=tags,
+                            file_name=file_name,
                         )
                     await r.xadd(
                         "doc.indexed",

@@ -1,3 +1,5 @@
+import logging
+import colorlog
 import redis.asyncio as redis
 from opensearchpy import OpenSearch
 from qdrant_client import QdrantClient
@@ -27,3 +29,30 @@ def get_redis():
 
 def get_neo4j():
     return _neo
+
+
+def setup_logging(level: str = "INFO"):
+    """Konfiguriert farbiges Logging mit colorlog."""
+    handler = colorlog.StreamHandler()
+    handler.setFormatter(
+        colorlog.ColoredFormatter(
+            "%(log_color)s%(levelname)-8s%(reset)s %(blue)s%(name)s%(reset)s - %(message)s",
+            log_colors={
+                "DEBUG": "cyan",
+                "INFO": "green",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "red,bg_white",
+            },
+            secondary_log_colors={},
+            style="%",
+        )
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    root_logger.handlers = [handler]
+
+
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)

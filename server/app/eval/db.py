@@ -1,7 +1,8 @@
 from __future__ import annotations
 import os, pathlib
-from typing import Optional, Iterable, Dict, List
+from typing import Optional, Iterable, Dict, List, Any
 from psycopg_pool import ConnectionPool
+from psycopg2.extras import Json
 
 DEFAULT_DSN = os.getenv(
     "EVAL_DB_DSN", "postgresql://postgres:postgres@localhost:5432/postgres"
@@ -50,22 +51,35 @@ def upsert_query(
     process_name: Optional[str],
     process_id: Optional[str],
     roles: Optional[List[str]],
+    current_node_id: Optional[str] = None,
 ) -> int:
     pool = get_pool()
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            insert into ragrun.queries (dataset_name, query_id, text, process_name, process_id, roles)
-            values (%s, %s, %s, %s, %s, %s)
-            on conflict (dataset_name, query_id) do update set
-              text=excluded.text, process_name=excluded.process_name, process_id=excluded.process_id, roles=excluded.roles
+            insert into ragrun.queries 
+                (dataset_name, query_id, text, process_name, process_id, roles, current_node_id)
+            values (%s, %s, %s, %s, %s, %s, %s)
+            on conflict (dataset_name, query_id) do update
+            set text = excluded.text,
+                process_name = excluded.process_name,
+                process_id = excluded.process_id,
+                roles = excluded.roles,
+                current_node_id = excluded.current_node_id
             returning id
             """,
-            (dataset_name, query_id, text, process_name, process_id, roles),
+            (
+                dataset_name,
+                query_id,
+                text,
+                process_name,
+                process_id,
+                roles,
+                current_node_id,
+            ),
         )
-        qpk = cur.fetchone()[0]
         conn.commit()
-        return qpk
+        return cur.fetchone()[0]
 
 
 def insert_qrels(
@@ -90,43 +104,91 @@ def insert_qrels(
         conn.commit()
 
 
-def upsert_run_item(run_id: int, query_pk: int, item: dict) -> None:
-    pool = get_pool()
+def upsert_run_item(
+    pool: ConnectionPool,
+    run_id: int,
+    query_id: str,
+    answer_text: Optional[str],
+    citations: Optional[list[Any]],
+    latency_ms: Optional[float],
+    status: str = "ok",
+    error_message: Optional[str] = None,
+    meta: Optional[dict[str, Any]] = None,
+) -> None:
+    """
+    Speichert ein einzelnes QA-Resultat für eine Query.
+    Schreibt konsistent in ragrun.eval_run_items (Evaluation-Log).
+    """
+    meta = meta or {}
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            insert into ragrun.eval_run_items
-              (run_id, query_pk, status, request_json, response_json, answer_text,
-               citations, latency_ms, token_in, token_out, confidence, whitelist_violation, decision)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            on conflict (run_id, query_pk) do update set
-              status=excluded.status,
-              request_json=excluded.request_json,
-              response_json=excluded.response_json,
-              answer_text=excluded.answer_text,
-              citations=excluded.citations,
-              latency_ms=excluded.latency_ms,
-              token_in=excluded.token_in,
-              token_out=excluded.token_out,
-              confidence=excluded.confidence,
-              whitelist_violation=excluded.whitelist_violation,
-              decision=excluded.decision
-            """,
-            (
+            insert into ragrun.eval_run_items (
                 run_id,
                 query_pk,
-                item.get("status", "ok"),
-                item.get("request_json"),
-                item.get("response_json"),
-                item.get("answer_text"),
-                item.get("citations"),
-                item.get("latency_ms"),
-                item.get("token_in"),
-                item.get("token_out"),
-                item.get("confidence"),
-                item.get("whitelist_violation"),
-                item.get("decision"),
-            ),
+                status,
+                request_json,
+                response_json,
+                answer_text,
+                citations,
+                latency_ms,
+                token_in,
+                token_out,
+                confidence,
+                whitelist_violation,
+                decision
+            )
+            values (
+                %(run_id)s,
+                %(query_id)s,
+                %(status)s,
+                %(request_json)s,
+                %(response_json)s,
+                %(answer_text)s,
+                %(citations)s,
+                %(latency_ms)s,
+                %(token_in)s,
+                %(token_out)s,
+                %(confidence)s,
+                %(whitelist_violation)s,
+                %(decision)s
+            )
+            on conflict (run_id, query_pk) do update set
+                status             = excluded.status,
+                request_json       = excluded.request_json,
+                response_json      = excluded.response_json,
+                answer_text        = excluded.answer_text,
+                citations          = excluded.citations,
+                latency_ms         = excluded.latency_ms,
+                token_in           = excluded.token_in,
+                token_out          = excluded.token_out,
+                confidence         = excluded.confidence,
+                whitelist_violation= excluded.whitelist_violation,
+                decision           = excluded.decision
+            """,
+            {
+                "run_id": run_id,
+                "query_id": query_id,
+                "status": status,
+                "request_json": (
+                    Json(meta.get("request"))
+                    if meta.get("request") is not None
+                    else None
+                ),
+                "response_json": (
+                    Json(meta.get("response"))
+                    if meta.get("response") is not None
+                    else None
+                ),
+                "answer_text": answer_text,
+                "citations": Json(citations) if citations is not None else None,
+                "latency_ms": int(latency_ms) if latency_ms is not None else None,
+                "token_in": meta.get("token_in"),
+                "token_out": meta.get("token_out"),
+                "confidence": meta.get("confidence"),
+                "whitelist_violation": meta.get("whitelist_violation"),
+                "decision": meta.get("decision"),
+            },
         )
         conn.commit()
 
@@ -223,3 +285,60 @@ def upsert_gold_answers(
             (query_pk, answers, explanation),
         )
         conn.commit()
+
+
+def upsert_gold_gating(
+    query_pk: int,
+    expected_lane_ids: List[str],
+    expected_node_ids: List[str],
+    expected_lane_names: List[str],
+    expected_task_names: List[str],
+) -> None:
+    """Speichert den erwarteten Gating-Kontext für eine PROCESS-Query."""
+    pool = get_pool()
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into ragrun.gold_gating 
+                (query_pk, expected_lane_ids, expected_node_ids, 
+                 expected_lane_names, expected_task_names)
+            values (%s, %s, %s, %s, %s)
+            on conflict (query_pk) do update set
+                expected_lane_ids = excluded.expected_lane_ids,
+                expected_node_ids = excluded.expected_node_ids,
+                expected_lane_names = excluded.expected_lane_names,
+                expected_task_names = excluded.expected_task_names
+            """,
+            (
+                query_pk,
+                expected_lane_ids,
+                expected_node_ids,
+                expected_lane_names,
+                expected_task_names,
+            ),
+        )
+        conn.commit()
+
+
+def get_gold_gating(query_pk: int) -> Optional[Dict[str, List[str]]]:
+    """Holt den erwarteten Gating-Kontext für eine Query."""
+    pool = get_pool()
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select expected_lane_ids, expected_node_ids, 
+                   expected_lane_names, expected_task_names
+            from ragrun.gold_gating
+            where query_pk = %s
+            """,
+            (query_pk,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "expected_lane_ids": row[0] or [],
+            "expected_node_ids": row[1] or [],
+            "expected_lane_names": row[2] or [],
+            "expected_task_names": row[3] or [],
+        }

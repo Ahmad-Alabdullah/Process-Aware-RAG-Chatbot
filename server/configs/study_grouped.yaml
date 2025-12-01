@@ -12,5 +12,5 @@ factors:
   D_repacking:
     - {factors: {prompt: {repacking: "default"}}}
     - {factors: {prompt: {repacking: "reverse"}}}
-design: "fractional"
+design: "full" # or "fractional"
 resolution: 4

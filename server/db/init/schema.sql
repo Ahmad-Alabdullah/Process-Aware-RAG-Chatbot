@@ -17,6 +17,7 @@ create table if not exists ragrun.queries (
   process_name text,
   process_id text,
   roles text[],
+  current_node_id text,
   unique (dataset_name, query_id)
 );
 
@@ -27,6 +28,16 @@ create table if not exists ragrun.gold_evidence (
   document_id text,
   relevance smallint not null default 1,
   unique (query_pk, chunk_id)
+);
+
+-- NEU: Gold Gating für PROCESS-Queries
+create table if not exists ragrun.gold_gating (
+  query_pk bigint primary key references ragrun.queries(id) on delete cascade,
+  expected_lane_ids text[] not null default '{}',
+  expected_node_ids text[] not null default '{}',
+  expected_lane_names text[] not null default '{}',
+  expected_task_names text[] not null default '{}',
+  created_at timestamptz not null default now()
 );
 
 create table if not exists ragrun.gold_answers (
@@ -84,4 +95,16 @@ create table if not exists ragrun.aggregates (
   ci_high double precision,
   n int,
   primary key (run_id, metric)
+);
+
+create table if not exists ragrun.run_items (
+    run_id       int references ragrun.eval_runs(id) on delete cascade,
+    query_id     text references ragrun.queries(id) on delete cascade,
+    answer_text  text,
+    citations    jsonb,
+    latency_ms   double precision,
+    status       text default 'ok',              
+    error_message text,                          
+    meta         jsonb default '{}'::jsonb,      
+    primary key (run_id, query_id)
 );

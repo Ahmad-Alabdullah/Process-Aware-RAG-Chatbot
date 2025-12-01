@@ -8,9 +8,9 @@ variants:
     override: {factors: {retrieval: {mode: "bm25"}}}
 
   - name: "H2_whitelist_on"
-    override: {qa_payload: {whitelistOnly: true}}
+    override: {qa_payload: {whitelist_enabled: true}}
   - name: "H2_whitelist_off"
-    override: {qa_payload: {whitelistOnly: false}}
+    override: {qa_payload: {whitelist_enabled: false}}
 
   - name: "H3_grauzonen_on"
     override: {factors: {policies: {grauzonen: true}}}

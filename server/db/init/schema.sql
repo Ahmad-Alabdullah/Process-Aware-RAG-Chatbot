@@ -18,6 +18,7 @@ create table if not exists ragrun.queries (
   process_id text,
   roles text[],
   current_node_id text,
+  definition_id text,
   unique (dataset_name, query_id)
 );
 

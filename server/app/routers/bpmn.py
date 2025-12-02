@@ -4,6 +4,8 @@ from app.services.bpmn_store import (
     list_definitions,
     list_process_nodes_lanes,
     process_graph,
+    delete_all_bpmn_data,
+    delete_bpmn_by_definition,
 )
 
 router = APIRouter(prefix="/api/bpmn")
@@ -71,3 +73,49 @@ def get_process_combo(process_id: str):
 def get_process_graph(process_id: str):
     g = process_graph(process_id)
     return {"ok": True, **g}
+
+
+@router.delete(
+    "/all",
+    summary="Alle BPMN-Daten löschen (Definitions, Processes, Nodes, Lanes, Whitelists)",
+)
+def delete_all_bpmn():
+    """
+    Löscht ALLE BPMN-Daten aus Neo4j:
+    - BPMN Definitions
+    - Processes
+    - Nodes
+    - Lanes
+    - Whitelists + WhitelistRules
+    - Participants
+    """
+    result = delete_all_bpmn_data()
+    return {"ok": True, **result}
+
+
+@router.delete(
+    "/definitions/{definition_id}",
+    summary="Eine BPMN-Definition mit allen zugehörigen Daten löschen",
+)
+def delete_definition(definition_id: str):
+    """
+    Löscht eine spezifische BPMN-Definition und alle zugehörigen Daten:
+    - Die Definition selbst
+    - Alle Processes der Definition
+    - Alle Nodes der Processes
+    - Alle Lanes der Processes
+    - Whitelist + WhitelistRules der Definition
+    """
+    if not definition_id:
+        raise HTTPException(
+            status_code=400, detail="definition_id darf nicht leer sein"
+        )
+
+    result = delete_bpmn_by_definition(definition_id)
+
+    if result.get("found") is False:
+        raise HTTPException(
+            status_code=404, detail=f"Definition '{definition_id}' nicht gefunden"
+        )
+
+    return {"ok": True, **result}

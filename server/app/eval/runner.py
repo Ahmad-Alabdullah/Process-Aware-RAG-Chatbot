@@ -1,17 +1,15 @@
 from __future__ import annotations
 import asyncio, yaml
-from typing import Optional, Dict, Any, List, TypedDict, Literal
+from typing import Optional, Dict, Any, List, TypedDict
 import typer
 from pathlib import Path
-
-from server.app.core.clients import get_logger
+from app.core.clients import get_logger
 
 from .config import RunConfig
 from .db import (
     init_db,
     upsert_run,
     upsert_run_item,
-    insert_retrieval_list,
     upsert_score,
     get_pool,
     upsert_gold_answers,
@@ -23,11 +21,6 @@ from .metrics.retrieval import compute_retrieval_metrics
 from .metrics.generation import exact_match_f1, ais_heuristic
 from .metrics.gating import gating_recall, gating_precision
 from .reporting import aggregate_and_store
-from app.services.gating_context import (
-    compute_gating_context,
-    build_gating_hint_from_context,
-    get_definition_id_for_process,
-)
 
 app = typer.Typer(help="RAG Evaluation Runner")
 
@@ -118,8 +111,15 @@ async def _exec_one(row, cfg: RunConfig, run_id: int):
     pid = row.get("process_id")
     roles = row.get("roles") or []
     current_node_id = row.get("current_node_id")
+    definition_id = row.get("definition_id")
 
     client = QAClient(base_url=cfg.qa_base_url)
+
+    # Ablation-Study Konfiguration
+    gating_cfg = cfg.factors.get("gating", {})
+    ablation_mode = gating_cfg.get("mode")
+    force_process_context = gating_cfg.get("force_process_context", False)
+
     payload = dict(cfg.qa_payload)
     payload.update(
         {
@@ -127,9 +127,26 @@ async def _exec_one(row, cfg: RunConfig, run_id: int):
             "process_name": pname,
             "process_id": pid,
             "roles": roles,
-            "current_node_id": current_node_id,  # An API weitergeben
+            "definition_id": definition_id,
         }
     )
+
+    if ablation_mode == "none":
+        # NONE: Kein Gating - current_node_id entfernen
+        payload["current_node_id"] = None
+        payload["force_process_context"] = False
+    elif ablation_mode == "process_context":
+        # PROCESS_CONTEXT: Grober Überblick ohne lokale Position
+        payload["current_node_id"] = None
+        payload["force_process_context"] = True
+    elif ablation_mode == "gating":
+        # GATING_ENABLED: Lokaler Kontext
+        payload["current_node_id"] = current_node_id
+        payload["force_process_context"] = False
+    else:
+        # Default: Normalbetrieb (current_node_id aus Query)
+        payload["current_node_id"] = current_node_id
+        payload["force_process_context"] = False
 
     pool = get_pool()
     try:
@@ -137,49 +154,24 @@ async def _exec_one(row, cfg: RunConfig, run_id: int):
         answer_text = resp.get("answer")
         citations = resp.get("context")
         latency_ms = float(resp.get("_latency_ms") or 0.0)
-        decision = resp.get("decision")
-        whitelist_violation = bool(resp.get("whitelist_violation"))
 
-        # Gating Hint aus Response extrahieren
-        gating_hint_from_response = resp.get("gating_hint")
+        gating_mode_from_response = resp.get("gating_mode", "none")
+        gating_hint_from_response = resp.get("gating_hint", "")
 
-        # Gating Context separat berechnen für Reproduzierbarkeit
-        gating_context = None
-        gating_hint_computed = None
-
-        if pid or pname:
-            # Definition-ID ermitteln falls nur process_name gegeben
-            def_id = None
-            if pname and not pid:
-                def_id = get_definition_id_for_process(pname)
-
-            gating_context = compute_gating_context(
-                process_id=pid,
-                definition_id=def_id,
-                roles=roles,
-                current_node_id=current_node_id,
-            )
-            gating_hint_computed = build_gating_hint_from_context(
-                context=gating_context,
-                process_name=pname,
-                roles=roles,
-            )
-
-        # Meta-Informationen für spätere Analyse speichern
+        # Meta-Informationen für spätere Analyse
         meta = {
+            "gating_mode": gating_mode_from_response,
             "gating_hint": gating_hint_from_response,
-            "gating_hint_computed": gating_hint_computed,
-            "gating_context": gating_context,
-            "prompt": resp.get("prompt"),
-            "decision": decision,
-            "whitelist_violation": whitelist_violation,
-            "current_node_id": current_node_id,
+            "gating_metadata": resp.get("gating_metadata", {}),
+            "current_node_id": payload.get("current_node_id"),
+            "ablation_mode": ablation_mode,
+            "force_process_context": force_process_context,
         }
 
         upsert_run_item(
             pool,
             run_id,
-            qid,
+            qpk,
             answer_text,
             citations,
             latency_ms,
@@ -188,19 +180,21 @@ async def _exec_one(row, cfg: RunConfig, run_id: int):
         )
 
         logger.info(
-            f"[Run {run_id}] Query {qid}: OK, latency={latency_ms:.0f}ms, "
-            f"gating={'yes' if gating_hint_from_response else 'no'}"
+            "Query %s completed: mode=%s, latency=%.0fms",
+            qid,
+            gating_mode_from_response,
+            latency_ms,
         )
 
     except Exception as e:
-        logger.error(f"[Run {run_id}] Query {qid} failed: {e}")
+        logger.exception("Query %s failed: %s", qid, e)
         upsert_run_item(
             pool,
             run_id,
-            qid,
-            answer_text=None,
-            citations=None,
-            latency_ms=0.0,
+            qpk,
+            None,
+            None,
+            None,
             status="error",
             meta={"error": str(e)},
         )
@@ -231,7 +225,7 @@ def run(
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select id, query_id, text, process_name, process_id, roles, current_node_id
+            select id, query_id, text, process_name, process_id, roles, current_node_id, definition_id
             from ragrun.queries
             where dataset_name = %s
             """,
@@ -246,6 +240,7 @@ def run(
                 process_id=r[4],
                 roles=r[5],
                 current_node_id=r[6],
+                definition_id=r[7],
             )
             for r in cur.fetchall()
         ]
@@ -362,7 +357,6 @@ def score(run_name: str):
         ais = ais_heuristic(answer_text or "", cited_ids)
         upsert_score(run_id, query_pk, "AIS", float(ais))
 
-        # NEU: Gating-Metriken für PROCESS-Queries
         gold_gating = get_gold_gating(query_pk)
         if gold_gating:
             # Gating-Kontext aus run_item.meta holen
@@ -526,6 +520,7 @@ class QueryRow(TypedDict):
     process_id: str | None
     roles: list[str] | None
     current_node_id: str | None
+    definition_id: str | None
 
 
 if __name__ == "__main__":

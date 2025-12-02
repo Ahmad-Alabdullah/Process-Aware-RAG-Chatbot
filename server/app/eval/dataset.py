@@ -18,8 +18,11 @@ def load_queries(dataset_name: str, path: str) -> Dict[str, int]:
             pid = obj.get("process_id")
             roles = obj.get("roles")
             current_node_id = obj.get("current_node_id")
+            definition_id = obj.get("definition_id")
 
-            qpk = upsert_query(dataset_name, qid, text, p, pid, roles, current_node_id)
+            qpk = upsert_query(
+                dataset_name, qid, text, p, pid, roles, current_node_id, definition_id
+            )
             id_map[qid] = qpk
     return id_map
 
@@ -42,7 +45,7 @@ def load_qrels(dataset_name: str, qid_to_pk: Dict[str, int], path: str) -> None:
     }
     """
     buf: Dict[int, List[tuple[str, int]]] = {}
-    gating_buf: Dict[int, Dict[str, Any]] = {}  # NEU: Gating pro Query
+    gating_buf: Dict[int, Dict[str, Any]] = {}
     unknown_queries = 0
 
     with open(path, "r", encoding="utf-8") as f:

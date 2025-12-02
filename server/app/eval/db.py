@@ -52,20 +52,22 @@ def upsert_query(
     process_id: Optional[str],
     roles: Optional[List[str]],
     current_node_id: Optional[str] = None,
+    definition_id: Optional[str] = None,
 ) -> int:
     pool = get_pool()
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
             insert into ragrun.queries 
-                (dataset_name, query_id, text, process_name, process_id, roles, current_node_id)
-            values (%s, %s, %s, %s, %s, %s, %s)
+                (dataset_name, query_id, text, process_name, process_id, roles, current_node_id, definition_id)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
             on conflict (dataset_name, query_id) do update
             set text = excluded.text,
                 process_name = excluded.process_name,
                 process_id = excluded.process_id,
                 roles = excluded.roles,
-                current_node_id = excluded.current_node_id
+                current_node_id = excluded.current_node_id,
+                definition_id = excluded.definition_id
             returning id
             """,
             (
@@ -76,6 +78,7 @@ def upsert_query(
                 process_id,
                 roles,
                 current_node_id,
+                definition_id,
             ),
         )
         conn.commit()

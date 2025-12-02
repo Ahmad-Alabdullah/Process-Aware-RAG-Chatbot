@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
+from typing import List, Optional
 from app.core.config import settings
-from typing import List, Literal, Optional
 
 
 class AskBody(BaseModel):
@@ -12,22 +12,36 @@ class AskBody(BaseModel):
     use_hyde: bool = False
     model: str = settings.OLLAMA_MODEL
 
-    # Kontext-Filter
-    process_name: Optional[str] = None
-    tags: Optional[List[str]] = None
-    roles: List[str] = Field(default_factory=list, description="Rollen des Principals")
-
-    # Whitelist-Gating
-    whitelist_enabled: bool = Field(
-        False, description="Ob Whitelist-Gating aktiviert ist"
+    # Kontext-Filter (für Retrieval)
+    process_name: Optional[str] = Field(
+        default=None, description="Prozessname als Filter/Boost für Retrieval"
     )
-    lane_ids: Optional[List[str]] = None
-    node_ids: Optional[List[str]] = None
-    definition_id: Optional[str] = None
-    process_id: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+    # Rollen (für Whitelist-Gating bei GATING_ENABLED)
+    roles: List[str] = Field(
+        default_factory=list, description="Rollen des Nutzers für Whitelist-Filter"
+    )
+
+    # Prozess-Kontext (aktiviert GATING_ENABLED wenn current_node_id gesetzt)
+    process_id: Optional[str] = Field(
+        default=None, description="BPMN Process-ID (xmlId)"
+    )
+    definition_id: Optional[str] = Field(
+        default=None, description="BPMN Definition-ID für Whitelist-Lookup"
+    )
     current_node_id: Optional[str] = Field(
         default=None,
-        description="Aktueller BPMN-Knoten (xmlId) der Nutzerinteraktion, "
-        "z. B. 'Activity_07h9cjl'.",
+        description="Aktueller BPMN-Knoten (xmlId) - aktiviert lokales Gating",
     )
-    prompt_style: Literal["baseline", "no_gating", "fewshot", "cot"] = "baseline"
+
+    # Ablation-Study: Erzwingt PROCESS_CONTEXT Modus
+    force_process_context: bool = Field(
+        default=False,
+        description="Nur für Ablation: Erzwingt groben Prozesskontext ohne lokale Position",
+    )
+
+    # Prompt-Stil
+    prompt_style: str = Field(
+        default="baseline", description="Prompt-Stil: baseline, fewshot, cot"
+    )

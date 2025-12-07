@@ -1,28 +1,72 @@
 run_name: "BASELINE"
-dataset: "demo"
+dataset: "demo" # Basis-Name, Qrels werden automatisch per Chunking-Suffix aufgelöst
 qa_base_url: "http://localhost:8000"
 
 qa_payload:
   query: null
   top_k: 5
   use_hyde: false
-  model: "qwen2.5:7b-instruct"
+  use_rerank: false
+  rerank_top_n: 50
+  model: "qwen3:8b"
   process_name: null    
   process_id: null        
   roles: []
-  whitelist_enabled: true 
+  whitelist_enabled: false 
   tags: []
   prompt_style: "baseline"
   gating_hint: ""         
   debug_return: true
 
 factors:
-  retrieval: {mode: "hybrid", rrf_k: 60}
-  rerank: {ce: false, topN: 50, topk_prompt: 5}
-  chunking: {max_characters: 1800, new_after_n_chars: 1350, overlap: 225, strategy: "by_title"}
-  embeddings: {model: "all-minilm"}
+  retrieval: 
+    mode: "hybrid"
+    rrf_k: 60
+  
+  rerank: 
+    enabled: false
+    model: "jina-reranker-v3"
+    top_n: 50
+  
+  chunking: 
+    max_characters: 1800
+    new_after_n_chars: 1350
+    overlap: 225
+    strategy: "by_title"
+  
+  embeddings: 
+    backend: "hf"
+    model: "sentence-transformers/all-minilm-l6-v2"
+    index_suffix: ""
+  
+  # LLM-Konfiguration mit wissenschaftlich fundierten Defaults
+  llm:
+    # QA-Generierung
+    qa:
+      model: "qwen3:8b"
+      temperature: 0.1      # Niedriges T für Faktentreue
+      max_tokens: 2048
+      num_ctx: 8192
+    
+    # Chain-of-Thought
+    cot:
+      model: "qwen3:8b"
+      temperature: 0.2      # Moderates T für Reasoning
+      max_tokens: 3072
+      num_ctx: 8192
+  
   prompt:
     style: "baseline"
+  
+  evaluation:
+    use_llm_judge: true
+    judge_model: "atla/selene-mini"
+    judge_temperature: 0.0  # IMMER 0.0 für Reproduzierbarkeit
+    semantic_sim_model: "EmbeddingGemma:300m"
+    bertscore_model: "deepset/gbert-large"
+
+ranking_sources: ["ce", "rrf"]
+ranking_fallback_all: true
 
 logging:
   save_prompt: true

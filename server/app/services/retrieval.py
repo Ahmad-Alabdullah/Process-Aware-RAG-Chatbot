@@ -30,9 +30,29 @@ def hybrid_search(
     # optionale Filter
     process_name: Optional[str] = None,
     tags: Optional[List[str]] = None,
+    use_rerank: bool = False,
+    rerank_top_n: int = 50,
 ) -> List[Dict[str, Any]]:
+    """
+    Hybrid Search mit optionalem Reranking.
+
+    Args:
+        q: Query
+        k: Anzahl der Ergebnisse
+        process_name: Filter nach Prozessname
+        tags: Filter nach Tags
+        use_rerank: Reranking aktivieren (Cross-Encoder)
+        rerank_top_n: Anzahl Kandidaten für Reranking
+
+    Returns:
+        Liste von Chunks mit Scores
+    """
+
     os_client = get_opensearch()
     qd = get_qdrant()
+
+    # Wenn Reranking aktiv, mehr Kandidaten holen
+    fetch_k = rerank_top_n if use_rerank else k * 5
 
     # ---------- 1) OpenSearch: Volltext + Filter ----------
     should = [
@@ -63,7 +83,7 @@ def hybrid_search(
     if os_filters:
         bool_query["filter"] = os_filters
 
-    logging.warning(f"OpenSearch hybrid_search bool_query: {bool_query}")
+    # logging.warning(f"OpenSearch hybrid_search bool_query: {bool_query}")
 
     os_resp = os_client.search(
         index=settings.OS_INDEX,
@@ -73,9 +93,9 @@ def hybrid_search(
         },
     )
 
-    logging.warning(
-        f"OpenSearch hybrid_search found {os_resp['hits']['total']['value']} hits"
-    )
+    # logging.warning(
+    #     f"OpenSearch hybrid_search found {os_resp['hits']['total']['value']} hits"
+    # )
 
     os_hits = os_resp["hits"]["hits"]
     os_rrf = {h["_id"]: rrf(i) for i, h in enumerate(os_hits, start=1)}
@@ -122,24 +142,53 @@ def hybrid_search(
     for cid, s in qd_rrf.items():
         fused[cid] = fused.get(cid, 0.0) + s
 
+    # Kandidaten für Reranking oder finale Ergebnisse
+    candidate_k = rerank_top_n if use_rerank else k
     top_ids = [
-        cid for cid, _ in sorted(fused.items(), key=lambda x: x[1], reverse=True)[:k]
+        cid
+        for cid, _ in sorted(fused.items(), key=lambda x: x[1], reverse=True)[
+            :candidate_k
+        ]
     ]
 
-    logging.warning(f"Fused top_ids: {top_ids}")
-
     # ---------- 4) Quellen nachladen ----------
+    results: List[Dict[str, Any]] = []
     if top_ids:
         mget = os_client.mget(index=settings.OS_INDEX, body={"ids": top_ids})
-        docs_by_id = {d["_id"]: d["_source"] for d in mget["docs"] if d.get("found")}
+        id_to_doc = {}
+        for d in mget["docs"]:
+            if d.get("found"):
+                src = d["_source"]
+                meta = src.get("meta", {})
+                id_to_doc[d["_id"]] = {
+                    "chunk_id": d["_id"],
+                    "text": src.get("text", ""),
+                    "document_id": src.get("document_id"),
+                    "process_name": meta.get("process_name"),
+                    "tags": meta.get("tags"),
+                    "page_number": meta.get("page_number"),
+                    "section_title": meta.get("section_title"),
+                    "rrf_score": fused.get(d["_id"], 0.0),
+                    "source": "rrf",
+                }
 
-    results: List[Dict[str, Any]] = []
-    for cid in top_ids:
-        src = docs_by_id.get(cid)
-        if not src:
-            try:
-                src = os_client.get(index=settings.OS_INDEX, id=cid)["_source"]
-            except Exception:
-                continue
-        results.append({"chunk_id": cid, "score": fused.get(cid, 0.0), **src})
+        # Reihenfolge beibehalten
+        for cid in top_ids:
+            if cid in id_to_doc:
+                results.append(id_to_doc[cid])
+
+    # ---------- 5) Optionales Reranking ----------
+    if use_rerank and results:
+        from app.services.reranking import rerank
+
+        logging.info(f"Reranking {len(results)} candidates → top {k}")
+        results = rerank(q, results, top_k=k, text_key="text")
+    else:
+        # Ohne Reranking: RRF-basiertes Ranking
+        results = results[:k]
+
+    # Rank-Feld hinzufügen
+    for i, doc in enumerate(results):
+        doc["rank"] = i + 1
+
     return results

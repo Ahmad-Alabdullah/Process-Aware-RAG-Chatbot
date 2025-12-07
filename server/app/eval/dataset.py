@@ -6,6 +6,14 @@ from .db import upsert_query, insert_qrels, upsert_gold_gating
 
 
 def load_queries(dataset_name: str, path: str) -> Dict[str, int]:
+    """
+    Lädt Queries mit erweitertem Schema für H2-Evaluation.
+
+    Feld: query_type
+    - "structure": Nur Prozessstruktur (Gating-isoliert)
+    - "knowledge": Nur Dokumentwissen (Retrieval-isoliert)
+    - "mixed": Kombination aus beidem (realer Use-Case)
+    """
     id_map: Dict[str, int] = {}
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -14,14 +22,27 @@ def load_queries(dataset_name: str, path: str) -> Dict[str, int]:
             obj = json.loads(line)
             qid = obj["query_id"]
             text = obj["text"]
+
             p = obj.get("process_name")
             pid = obj.get("process_id")
             roles = obj.get("roles")
             current_node_id = obj.get("current_node_id")
             definition_id = obj.get("definition_id")
 
+            query_type = obj.get("query_type", "mixed")  # Default: mixed
+            expected_source = obj.get("expected_source", "both")
+
             qpk = upsert_query(
-                dataset_name, qid, text, p, pid, roles, current_node_id, definition_id
+                dataset_name,
+                qid,
+                text,
+                p,
+                pid,
+                roles,
+                current_node_id,
+                definition_id,
+                query_type=query_type,
+                expected_source=expected_source,
             )
             id_map[qid] = qpk
     return id_map

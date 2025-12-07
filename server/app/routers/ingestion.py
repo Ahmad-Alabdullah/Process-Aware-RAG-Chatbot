@@ -1,14 +1,17 @@
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 import os, uuid, shutil, json
 import aiofiles
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from app.core.clients import get_redis
 from app.services.pipeline import (
+    ChunkingStrategy,
     delete_all_chunks_opensearch,
     delete_all_chunks_qdrant,
     delete_chunks_by_process_opensearch,
     delete_chunks_by_process_qdrant,
+    delete_chunks_by_tag_opensearch,
+    delete_chunks_by_tag_qdrant,
     ensure_indices,
     index_chunks,
 )
@@ -25,10 +28,24 @@ async def upload_document(
     source: str = Form("manual"),
     tags: str = Form(""),
     process_name: str = Form(""),
+    chunking_strategy: Literal["by_title", "semantic"] = Form("by_title"),
 ):
+    """
+    Upload und Verarbeitung von PDF-Dokumenten (async via Redis Stream).
+
+    Args:
+        file: Die hochzuladende PDF-Datei
+        source: Quelle des Dokuments
+        tags: Komma-separierte Tags
+        process_name: Zugehöriger Prozessname
+        chunking_strategy:
+            - "by_title": Standard-Chunking nach Überschriften (1800 chars)
+            - "semantic": Semantisches Chunking mit bge-m3 (Percentile 95%)
+    """
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     doc_id = str(uuid.uuid4())
     dst = os.path.join(UPLOAD_DIR, f"{doc_id}-{file.filename}")
+
     async with aiofiles.open(dst, "wb") as out:
         while chunk := await file.read(1024 * 1024):
             await out.write(chunk)
@@ -43,14 +60,15 @@ async def upload_document(
             "source": source,
             "tags": tags,
             "process_name": process_name,
+            "chunking_strategy": chunking_strategy,
         },
     )
+
     return {
         "document_id": doc_id,
         "file_name": file.filename,
-        "path": dst,
-        "tags": tags,
-        "process_name": process_name,
+        "chunking_strategy": chunking_strategy,
+        "status": "queued",
     }
 
 
@@ -91,6 +109,25 @@ def delete_chunks_by_process(process_name: str):
     }
 
 
+@router.delete(
+    "/tag/{tag}",
+    summary="Alle Chunks zu einem Tag in OS & Qdrant löschen",
+)
+def delete_chunks_by_tag(tag: str):
+    if not tag:
+        raise HTTPException(status_code=400, detail="tag darf nicht leer sein")
+
+    deleted_os = delete_chunks_by_tag_opensearch(tag)
+    delete_chunks_by_tag_qdrant(tag)
+
+    return {
+        "ok": True,
+        "tag": tag,
+        "opensearch_deleted": deleted_os,
+        "qdrant": "delete by filter(tag) requested",
+    }
+
+
 @router.post("/chunks/manual")
 def index_manual_chunks(chunks: List[ManualChunk]):
     """
@@ -104,7 +141,8 @@ def index_manual_chunks(chunks: List[ManualChunk]):
             status_code=400, detail="Payload 'chunks' darf nicht leer sein."
         )
 
-    ensure_indices()
+    ensure_indices(ChunkingStrategy.BY_TITLE)
+    ensure_indices(ChunkingStrategy.SEMANTIC)
 
     indexed = 0
     for c in chunks:
@@ -114,6 +152,7 @@ def index_manual_chunks(chunks: List[ManualChunk]):
             chunks=[(c.text, c.meta)],
             process_name=c.process_name,
             tags=c.tags,
+            strategy=c.chunking_strategy,
         )
         indexed += 1
 

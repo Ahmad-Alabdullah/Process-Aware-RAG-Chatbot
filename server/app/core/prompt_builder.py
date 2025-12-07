@@ -26,7 +26,7 @@ def build_prompt(
         Kontext aus Prozessdokumenten:
         {context_text}
 
-        Antwort (auf Deutsch und mit Belegen und Zitaten aus dem Kontext. Falls die Zitatpflicht nicht erfüllbar ist, mache dies deutlich und erfinde keine Belege oder Informationen aus deinem internen Wissen):
+        Antworte zusammenfassend aber trotzdem ohne Detailsverlust (auf Deutsch und mit Belegen und Zitaten aus dem Kontext. Falls die Zitatpflicht nicht erfüllbar ist, mache dies deutlich und erfinde keine Belege oder Informationen aus deinem internen Wissen):
         """
 
     if style == "fewshot":

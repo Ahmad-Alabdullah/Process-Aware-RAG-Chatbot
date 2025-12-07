@@ -208,3 +208,8 @@ __marimo__/
 
 #data
 server/data
+
+!client/lib/
+server/datasets
+server/datasets/demo_answers.jsonl
+server/datasets/demo_queries.jsonl

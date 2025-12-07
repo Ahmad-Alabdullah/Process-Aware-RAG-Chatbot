@@ -1,5 +1,6 @@
 import time as time_module
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
+from transformers import Optional
 
 from app.core.models.askModel import AskBody
 from app.core.prompt_builder import build_prompt
@@ -7,6 +8,8 @@ from app.services.retrieval import hybrid_search
 from app.services.llm import ollama_generate
 from app.services.gating import compute_gating, GatingMode
 from app.core.clients import get_logger
+from app.core.config import settings
+from app.core.llm_config import LLMPresets
 
 router = APIRouter(prefix="/api/qa")
 
@@ -14,7 +17,20 @@ logger = get_logger(__name__)
 
 
 @router.post("/ask")
-def ask(body: AskBody):
+def ask(
+    body: AskBody,
+    # Optionale Overrides für Evaluation
+    os_index: Optional[str] = Query(None, description="OpenSearch Index Override"),
+    qdrant_collection: Optional[str] = Query(
+        None, description="Qdrant Collection Override"
+    ),
+    embedding_backend: Optional[str] = Query(None, description="'ollama' oder 'hf'"),
+    embedding_model: Optional[str] = Query(None, description="Embedding Modellname"),
+    # LLM-Parameter (optional für Experimente)
+    temperature: Optional[float] = Query(
+        None, ge=0.0, le=2.0, description="Temperature Override (default: 0.1 für QA)"
+    ),
+):
     """
     Process-Aware QA Endpoint.
 
@@ -22,14 +38,21 @@ def ask(body: AskBody):
     - NONE: Kein current_node_id → Baseline (process_name nur als Retrieval-Filter)
     - PROCESS_CONTEXT: force_process_context=True → Grober Prozessüberblick (nur Ablation)
     - GATING_ENABLED: current_node_id gesetzt → Lokaler Prozesskontext
+
+    Temperature-Defaults (wissenschaftlich fundiert):
+    - QA-Generierung: 0.1 (niedriges T für Faktentreue)
+    - HyDE: 0.3 (höheres T für Variabilität)
+    - CoT: 0.2 (moderates T für Reasoning)
     """
     logger.info(
-        "QA /ask: query=%s, process=%s, node=%s, roles=%s, rerank=%s",
+        "QA /ask: query=%s, process=%s, node=%s, rerank=%s, emb=%s/%s",
         body.query[:50] if body.query else "",
         body.process_name,
         body.current_node_id,
-        body.roles,
         body.use_rerank,
+        embedding_backend or "default",
+        embedding_model or "default",
+        temperature or "default",
     )
 
     t0 = time_module.perf_counter()
@@ -61,6 +84,11 @@ def ask(body: AskBody):
         tags=body.tags or None,
         use_rerank=body.use_rerank,
         rerank_top_n=body.rerank_top_n,
+        # Dynamische Config
+        os_index=os_index,
+        qdrant_collection=qdrant_collection,
+        embedding_backend=embedding_backend or settings.EMBEDDING_BACKEND,
+        embedding_model=embedding_model or settings.EMBEDDING_MODEL,
     )
 
     t2 = time_module.perf_counter()
@@ -90,18 +118,28 @@ def ask(body: AskBody):
     )
 
     t3 = time_module.perf_counter()
-    logger.info("Prompt building took %.3f seconds", t3 - t2)
-    logger.info("📝 Prompt length: %d chars, ~%d tokens", len(prompt), len(prompt) // 4)
 
-    # logger.debug("Prompt hint length: %d", len(gating.prompt_hint))
+    # 6) LLM-Generierung mit passender Config
+    if body.prompt_style == "cot":
+        llm_config = LLMPresets.chain_of_thought(model=body.model)
+    else:
+        llm_config = LLMPresets.rag_qa(model=body.model)
 
-    # 5) LLM-Generierung
-    answer = ollama_generate(prompt, model=body.model)
+    # Temperature Override falls angegeben
+    if temperature is not None:
+        llm_config.temperature = temperature
+
+    answer = ollama_generate(prompt, config=llm_config)
 
     t4 = time_module.perf_counter()
-    logger.info("LLM generation took %.3f seconds", t4 - t3)
-    logger.info("⏱️ Total: %.2fs", t4 - t0)
-    logger.info("📤 Answer length: %d chars, ~%d tokens", len(answer), len(answer) // 4)
+    logger.info(
+        "⏱️ Total: %.2fs (gating=%.2f, retrieval=%.2f, prompt=%.2f, llm=%.2f)",
+        t4 - t0,
+        t1 - t0,
+        t2 - t1,
+        t3 - t2,
+        t4 - t3,
+    )
 
     # 6) Response
     response = {
@@ -114,7 +152,12 @@ def ask(body: AskBody):
         "used_model": body.model,
         "used_hyde": body.use_hyde,
         "used_rerank": body.use_rerank,
+        "used_temperature": llm_config.temperature,
         "top_k": body.top_k,
+        "embedding_config": {
+            "backend": embedding_backend or settings.EMBEDDING_BACKEND,
+            "model": embedding_model or settings.EMBEDDING_MODEL,
+        },
     }
 
     # Position-Details für GATING_ENABLED

@@ -6,28 +6,40 @@ import requests
 from app.core.config import settings
 from app.core.clients import get_logger
 from app.services.gating import _get_process_tasks_from_neo4j
+from app.core.llm_config import LLMPresets
 
 logger = get_logger(__name__)
 
 DEFAULT_JUDGE_MODEL = "atla/selene-mini"
 
 
-def _ollama_generate(
+def _ollama_generate_judge(
     prompt: str,
     model: str = DEFAULT_JUDGE_MODEL,
-    temperature: float = 0.0,
 ) -> str:
-    """Generiert Antwort via Ollama."""
+    """
+    Generiert Antwort via Ollama für Evaluation.
+
+    WICHTIG: Temperature=0.0 für Reproduzierbarkeit!
+
+    Wissenschaftliche Begründung:
+    - Evaluationsmetriken müssen reproduzierbar sein
+    - Verschiedene Runs sollten gleiche Scores liefern
+    - Temperature=0 eliminiert Sampling-Varianz
+    """
+    config = LLMPresets.evaluation(model=model)
+
     try:
         resp = requests.post(
             f"{settings.OLLAMA_BASE}/api/generate",
             json={
-                "model": model,
+                "model": config.model,
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": temperature,
-                    "num_ctx": 8192,
+                    "temperature": config.temperature,  # 0.0
+                    "num_ctx": config.num_ctx,
+                    "num_predict": config.max_tokens,
                 },
             },
             timeout=120,
@@ -40,26 +52,17 @@ def _ollama_generate(
 
 
 def _parse_judge_response(response: str) -> Dict[str, Any]:
-    """Parst die Antwort des Judge-Modells."""
-    # JSON extrahieren
-    json_match = re.search(r"\{[\s\S]*\}", response)
-    if json_match:
-        try:
+    """Parst die JSON-Antwort des Judge-Modells."""
+    # ... existing parsing logic ...
+    try:
+        # Versuche JSON zu extrahieren
+        json_match = re.search(r"\{[^{}]*\}", response, re.DOTALL)
+        if json_match:
             return json.loads(json_match.group())
-        except json.JSONDecodeError:
-            pass
+    except json.JSONDecodeError:
+        pass
 
-    # [[score]] Format
-    bracket_match = re.search(r"\[\[(\d+(?:\.\d+)?)\]\]", response)
-    if bracket_match:
-        return {"score": float(bracket_match.group(1))}
-
-    # Score: X Format
-    score_match = re.search(r"[Ss]core[:\s]+(\d+(?:\.\d+)?)", response)
-    if score_match:
-        return {"score": float(score_match.group(1))}
-
-    return {"score": 0, "parse_error": True}
+    return {"error": "Could not parse response", "raw": response}
 
 
 # ============================================================
@@ -123,7 +126,7 @@ Die folgende Frage ist eine STRUKTUR-FRAGE, die nur aus dem Prozesskontext
     "reasoning": "Begründung"
 }}"""
 
-    raw_response = _ollama_generate(prompt, model=model)
+    raw_response = _ollama_generate_judge(prompt, model=model)
     result = _parse_judge_response(raw_response)
 
     score = min(5, max(1, result.get("score", 3)))
@@ -216,7 +219,7 @@ Der Gating-Hint gibt den KONTEXT vor - die Antwort sollte diesen respektieren.
     "reasoning": "Begründung"
 }}"""
 
-    raw_response = _ollama_generate(prompt, model=model)
+    raw_response = _ollama_generate_judge(prompt, model=model)
     result = _parse_judge_response(raw_response)
 
     score = min(5, max(1, result.get("score", 3)))
@@ -298,7 +301,7 @@ C) INTEGRATION: Sind Prozess und Dokumente sinnvoll kombiniert?
     "reasoning": "Begründung"
 }}"""
 
-    raw_response = _ollama_generate(prompt, model=model)
+    raw_response = _ollama_generate_judge(prompt, model=model)
     result = _parse_judge_response(raw_response)
 
     structure_score = min(5, max(1, result.get("structure_score", 3)))
@@ -431,24 +434,19 @@ def judge_factual_consistency(
     query: str,
     response: str,
     gold_answer: str,
-    model: str = DEFAULT_JUDGE_MODEL,  # selene-mini
+    model: str = DEFAULT_JUDGE_MODEL,
 ) -> Dict[str, Any]:
     """
-    LLM-basierte Bewertung der faktischen Übereinstimmung.
+    Bewertet faktische Konsistenz der Antwort.
 
-    Verwendet selene-mini für strukturierte Evaluation.
-    Skala: 1-5 (1=perfekt, 5=ungenügend)
+    Temperature=0.0 (via LLMPresets.evaluation) für Reproduzierbarkeit.
 
     Returns:
-        Dict mit score, normalized_score, reasoning
+        Dict mit:
+        - factual_consistency_score: 1-5 (5=perfekt)
+        - factual_consistency_normalized: 0.0-1.0
+        - reasoning: Begründung
     """
-    if not response.strip() or not gold_answer.strip():
-        return {
-            "factual_consistency_score": 5,
-            "factual_consistency_normalized": 0.0,
-            "reasoning": "Leere Antwort",
-        }
-
     prompt = f"""Du bist ein Evaluator für Frage-Antwort-Systeme.
 
 ### Aufgabe
@@ -463,17 +461,12 @@ Bewerte die faktische Übereinstimmung der generierten Antwort mit der Referenz-
 ### Generierte Antwort (zu bewerten)
 {response}
 
-### Bewertungskriterien
-1. **Faktische Korrektheit**: Stimmen die Fakten überein?
-2. **Vollständigkeit**: Werden alle wichtigen Punkte abgedeckt?
-3. **Keine Widersprüche**: Widerspricht die Antwort der Referenz?
-
 ### Bewertungsskala (1-5)
-1 = Perfekt: Faktisch identisch, alle Punkte korrekt
-2 = Gut: Überwiegend korrekt, minimale Auslassungen
+5 = Perfekt: Faktisch identisch, alle Punkte korrekt
+4 = Gut: Überwiegend korrekt, minimale Auslassungen
 3 = Akzeptabel: Kernaussagen korrekt, einige Lücken
-4 = Problematisch: Wichtige Fakten fehlen oder falsch
-5 = Ungenügend: Widerspricht der Referenz oder falsch
+2 = Problematisch: Wichtige Fakten fehlen oder falsch
+1 = Falsch: Widersprüche oder grobe Fehler
 
 ### Antwortformat (JSON)
 {{
@@ -481,13 +474,20 @@ Bewerte die faktische Übereinstimmung der generierten Antwort mit der Referenz-
     "reasoning": "Kurze Begründung"
 }}"""
 
-    raw_response = _ollama_generate(prompt, model=model)
-    result = _parse_judge_response(raw_response)
+    raw_response = _ollama_generate_judge(prompt, model=model)
+    parsed = _parse_judge_response(raw_response)
 
-    score = min(5, max(1, result.get("score", 3)))
+    score = parsed.get("score", 3)
+    if isinstance(score, str):
+        try:
+            score = int(score)
+        except ValueError:
+            score = 3
+
+    score = max(1, min(5, score))
 
     return {
         "factual_consistency_score": score,
-        "factual_consistency_normalized": (5 - score) / 4.0,  # 0-1, höher = besser
-        "reasoning": result.get("reasoning", ""),
+        "factual_consistency_normalized": (score - 1) / 4.0,  # 0.0 - 1.0
+        "reasoning": parsed.get("reasoning", ""),
     }

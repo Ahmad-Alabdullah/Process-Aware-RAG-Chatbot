@@ -1,8 +1,10 @@
-import logging
 from typing import List, Dict, Any, Optional, Set
+
 from app.core.config import settings
-from app.core.clients import get_opensearch, get_qdrant
+from app.core.clients import get_logger, get_opensearch, get_qdrant
 from app.services.pipeline import embed_texts
+
+logger = get_logger(__name__)
 
 
 def rrf(rank: int, k: Optional[int] = None) -> float:
@@ -23,6 +25,39 @@ def _terms(field: str, values):
     return {"terms": {f"{field}.keyword": list(values)}}
 
 
+def embed_texts_dynamic(
+    texts: List[str],
+    backend: str = "hf",
+    model: str = "sentence-transformers/all-minilm-l6-v2",
+) -> List[List[float]]:
+    """
+    Embedding mit dynamischer Backend/Modell-Auswahl.
+
+    Args:
+        texts: Texte zum Embedden
+        backend: "ollama" oder "hf"
+        model: Modellname
+
+    Returns:
+        Liste von Embedding-Vektoren
+    """
+    if backend == "hf":
+        from sentence_transformers import SentenceTransformer
+
+        _model = SentenceTransformer(model)
+        return _model.encode(texts, normalize_embeddings=True).tolist()
+    else:
+        import requests
+
+        resp = requests.post(
+            f"{settings.OLLAMA_BASE}/api/embed",
+            json={"model": model, "input": texts},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["embeddings"]
+
+
 def hybrid_search(
     q: str,
     k: int,
@@ -32,17 +67,25 @@ def hybrid_search(
     tags: Optional[List[str]] = None,
     use_rerank: bool = False,
     rerank_top_n: int = 50,
+    os_index: Optional[str] = None,
+    qdrant_collection: Optional[str] = None,
+    embedding_backend: str = "hf",
+    embedding_model: str = "sentence-transformers/all-minilm-l6-v2",
 ) -> List[Dict[str, Any]]:
     """
-    Hybrid Search mit optionalem Reranking.
+    Hybrid Search mit dynamischer Embedding-Konfiguration.
 
     Args:
         q: Query
         k: Anzahl der Ergebnisse
         process_name: Filter nach Prozessname
         tags: Filter nach Tags
-        use_rerank: Reranking aktivieren (Cross-Encoder)
+        use_rerank: Reranking aktivieren
         rerank_top_n: Anzahl Kandidaten für Reranking
+        os_index: OpenSearch Index (default aus settings)
+        qdrant_collection: Qdrant Collection (default aus settings)
+        embedding_backend: "ollama" oder "hf"
+        embedding_model: Modellname für Embeddings
 
     Returns:
         Liste von Chunks mit Scores
@@ -50,6 +93,10 @@ def hybrid_search(
 
     os_client = get_opensearch()
     qd = get_qdrant()
+
+    # Index-Namen
+    os_idx = os_index or settings.OS_INDEX
+    qd_col = qdrant_collection or settings.QDRANT_COLLECTION
 
     # Wenn Reranking aktiv, mehr Kandidaten holen
     fetch_k = rerank_top_n if use_rerank else k * 5
@@ -83,19 +130,13 @@ def hybrid_search(
     if os_filters:
         bool_query["filter"] = os_filters
 
-    # logging.warning(f"OpenSearch hybrid_search bool_query: {bool_query}")
-
     os_resp = os_client.search(
-        index=settings.OS_INDEX,
+        index=os_idx,
         body={
-            "size": k * 5,
+            "size": fetch_k,
             "query": {"bool": bool_query},
         },
     )
-
-    # logging.warning(
-    #     f"OpenSearch hybrid_search found {os_resp['hits']['total']['value']} hits"
-    # )
 
     os_hits = os_resp["hits"]["hits"]
     os_rrf = {h["_id"]: rrf(i) for i, h in enumerate(os_hits, start=1)}
@@ -104,6 +145,7 @@ def hybrid_search(
     from qdrant_client.http.models import Filter, FieldCondition, MatchValue, MatchAny
 
     must_conditions = []
+
     if process_name:
         must_conditions.append(
             FieldCondition(key="process_name", match=MatchValue(value=process_name))
@@ -123,11 +165,13 @@ def hybrid_search(
 
     qfilter = Filter(must=must_conditions) if must_conditions else None
 
-    vec = embed_texts([q])[0]
+    # Dynamisches Embedding
+    vec = embed_texts_dynamic([q], backend=embedding_backend, model=embedding_model)[0]
+
     qd_hits = qd.search(
-        collection_name=settings.QDRANT_COLLECTION,
+        collection_name=qd_col,
         query_vector=vec,
-        limit=k * 5,
+        limit=fetch_k,
         query_filter=qfilter,
         with_payload=True,
     )
@@ -142,7 +186,6 @@ def hybrid_search(
     for cid, s in qd_rrf.items():
         fused[cid] = fused.get(cid, 0.0) + s
 
-    # Kandidaten für Reranking oder finale Ergebnisse
     candidate_k = rerank_top_n if use_rerank else k
     top_ids = [
         cid
@@ -154,7 +197,7 @@ def hybrid_search(
     # ---------- 4) Quellen nachladen ----------
     results: List[Dict[str, Any]] = []
     if top_ids:
-        mget = os_client.mget(index=settings.OS_INDEX, body={"ids": top_ids})
+        mget = os_client.mget(index=os_idx, body={"ids": top_ids})
         id_to_doc = {}
         for d in mget["docs"]:
             if d.get("found"):
@@ -172,7 +215,6 @@ def hybrid_search(
                     "source": "rrf",
                 }
 
-        # Reihenfolge beibehalten
         for cid in top_ids:
             if cid in id_to_doc:
                 results.append(id_to_doc[cid])
@@ -181,10 +223,10 @@ def hybrid_search(
     if use_rerank and results:
         from app.services.reranking import rerank
 
-        logging.info(f"Reranking {len(results)} candidates → top {k}")
+        logger.info(f"Reranking {len(results)} candidates → top {k}")
         results = rerank(q, results, top_k=k, text_key="text")
     else:
-        # Ohne Reranking: RRF-basiertes Ranking
+        # fusion onlyy
         results = results[:k]
 
     # Rank-Feld hinzufügen

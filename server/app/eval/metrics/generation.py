@@ -237,11 +237,11 @@ def rouge_l(pred: str, gold: str) -> Dict[str, float]:
 #     return _semantic_model
 
 
-def semantic_similarity(pred: str, gold: str) -> float:
+def semantic_similarity(
+    pred: str, gold: str, model: str = "EmbeddingGemma:300m"
+) -> float:
     """
     Embedding-basierte semantische Ähnlichkeit.
-
-    Verwendet EmbeddingGemma-300m via Ollama (unabhängig von Pipeline).
     """
     if not pred.strip() or not gold.strip():
         return 0.0
@@ -253,7 +253,7 @@ def semantic_similarity(pred: str, gold: str) -> float:
         resp = requests.post(
             f"{settings.OLLAMA_BASE}/api/embed",
             json={
-                "model": "EmbeddingGemma:300m",
+                "model": model,
                 "input": [pred, gold],
             },
             timeout=60,
@@ -261,11 +261,9 @@ def semantic_similarity(pred: str, gold: str) -> float:
         resp.raise_for_status()
         embeddings = resp.json()["embeddings"]
 
-        # Kosinus-Ähnlichkeit
         pred_emb = np.array(embeddings[0])
         gold_emb = np.array(embeddings[1])
 
-        # Normalisieren
         pred_norm = pred_emb / (np.linalg.norm(pred_emb) + 1e-9)
         gold_norm = gold_emb / (np.linalg.norm(gold_emb) + 1e-9)
 
@@ -273,7 +271,7 @@ def semantic_similarity(pred: str, gold: str) -> float:
         return max(0.0, similarity)
 
     except Exception as e:
-        logger.warning(f"Semantic similarity (EmbeddingGemma) Fehler: {e}")
+        logger.warning(f"Semantic similarity Fehler: {e}")
         return 0.0
 
 
@@ -284,34 +282,38 @@ def semantic_similarity(pred: str, gold: str) -> float:
 _bertscore_model = None
 
 
-def _get_bertscore():
-    """Lazy Loading von BERTScore."""
-    global _bertscore_model
-    if _bertscore_model is None:
+def _get_bertscore(model: str = "deepset/gbert-large"):
+    """Lazy Loading von BERTScore mit konfiguriertem Modell."""
+    global _bertscore_models
+
+    if model not in _bertscore_models:
         try:
             from bert_score import BERTScorer
             import torch
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            _bertscore_model = BERTScorer(
-                lang="de",
+            # num_layers basierend auf Modell
+            num_layers = 17 if "large" in model.lower() else 9
+
+            _bertscore_models[model] = BERTScorer(
+                model_type=model,
+                num_layers=num_layers,
                 rescale_with_baseline=True,
                 device=device,
-                model_type="deepset/gbert-large",
-                num_layers=17,
             )
-            logger.info("BERTScore geladen (lang=de)")
+            logger.info(f"BERTScore geladen (model={model}, device={device})")
         except Exception as e:
             logger.warning(f"BERTScore init Fehler: {e}")
             return None
-    return _bertscore_model
+
+    return _bertscore_models.get(model)
 
 
-def bert_score(pred: str, gold: str) -> Dict[str, float]:
-    """
-    BERTScore: Token-Level Embedding-Ähnlichkeit via BERT.
-    """
+def bert_score(
+    pred: str, gold: str, model: str = "deepset/gbert-large"
+) -> Dict[str, float]:
+    """BERTScore mit konfiguriertem Modell."""
     if not pred.strip() or not gold.strip():
         return {
             "bertscore_precision": 0.0,
@@ -319,7 +321,7 @@ def bert_score(pred: str, gold: str) -> Dict[str, float]:
             "bertscore_f1": 0.0,
         }
 
-    scorer = _get_bertscore()
+    scorer = _get_bertscore(model)
     if scorer is None:
         return {
             "bertscore_precision": 0.0,
@@ -348,15 +350,20 @@ def bert_score(pred: str, gold: str) -> Dict[str, float]:
 # ============================================================
 
 
-def compute_generation_metrics(pred: str, gold: str) -> Dict[str, float]:
+def compute_generation_metrics(
+    pred: str,
+    gold: str,
+    semantic_sim_model: str = "EmbeddingGemma:300m",
+    bertscore_model: str = "deepset/gbert-large",
+) -> Dict[str, float]:
     """
     Berechnet alle Generation-Metriken.
 
-    Metriken:
-    - SemanticSim: Embedding-basierte Ähnlichkeit
-    - ROUGE-L-Recall: Wie viel der Gold-Antwort ist enthalten?
-    - Content-F1: Token-F1 ohne Stoppwörter
-    - BERTScore: Token-Level Embedding-Ähnlichkeit
+    Args:
+        pred: Generierte Antwort
+        gold: Gold-Antwort
+        semantic_sim_model: Modell für SemanticSim (via Ollama)
+        bertscore_model: Modell für BERTScore
     """
     results: Dict[str, float] = {}
 
@@ -366,15 +373,15 @@ def compute_generation_metrics(pred: str, gold: str) -> Dict[str, float]:
     # Content-F1
     results["content_f1"] = content_f1(pred, gold)
 
-    # ROUGE-L (nur Recall für deine Zwecke)
+    # ROUGE-L
     rouge = rouge_l(pred, gold)
     results["rouge_l_recall"] = rouge["rouge_l_recall"]
 
-    # Semantic Similarity
-    results["semantic_sim"] = semantic_similarity(pred, gold)
+    # Semantic Similarity (mit konfiguriertem Modell)
+    results["semantic_sim"] = semantic_similarity(pred, gold, model=semantic_sim_model)
 
-    # BERTScore
-    bert = bert_score(pred, gold)
+    # BERTScore (mit konfiguriertem Modell)
+    bert = bert_score(pred, gold, model=bertscore_model)
     results["bertscore_f1"] = bert["bertscore_f1"]
 
     return results

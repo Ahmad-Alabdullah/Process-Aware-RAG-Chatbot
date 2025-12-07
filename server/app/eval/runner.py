@@ -3,7 +3,7 @@ import asyncio, yaml
 from typing import Optional, Dict, Any, List, TypedDict
 import typer
 from pathlib import Path
-from app.core.clients import get_logger
+from app.core.clients import get_logger, setup_logging
 from app.eval.metrics.faithfulness import compute_faithfulness_metrics
 from app.eval.metrics.llm_judge import judge_factual_consistency
 
@@ -25,7 +25,7 @@ from .metrics.generation import (
     compute_generation_metrics,
 )
 from .metrics.gating import gating_recall, gating_precision
-from .reporting import aggregate_and_store
+from .reporting import METRIC_GROUPS, aggregate_and_store
 
 app = typer.Typer(help="RAG Evaluation Runner")
 
@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 
 @app.command()
 def initdb(
-    schema: str = "sql/schema.sql",
+    schema: str = "db/init/schema.sql",
     dsn: Optional[str] = typer.Option(None, envvar="EVAL_DB_DSN"),
 ):
     """Create tables in Postgres."""
@@ -151,6 +151,11 @@ def _extract_predicted_gating(gating_metadata: Dict[str, Any]) -> Dict[str, List
 
 async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int):
     """Einzelner API-Call mit Logging."""
+    # Embedding-Config aus factors
+    emb_cfg = cfg.get_embedding_config()
+    rerank_cfg = cfg.get_rerank_config()
+    os_index, qdrant_collection = cfg.get_index_names()
+
     payload = {
         "query": qr["text"],
         "process_name": qr["process_name"],
@@ -161,16 +166,23 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
         **cfg.qa_payload,
     }
 
-    # Reranking aus factors übernehmen
-    rerank_cfg = cfg.factors.get("rerank", {})
-    if rerank_cfg.get("enabled"):
+    # Reranking
+    if rerank_cfg.enabled:
         payload["use_rerank"] = True
-        payload["rerank_top_n"] = rerank_cfg.get("top_n", 50)
+        payload["rerank_top_n"] = rerank_cfg.top_n
     else:
         payload["use_rerank"] = payload.get("use_rerank", False)
 
+    # Query-Parameter für Embedding-Config
+    query_params = {
+        "os_index": os_index,
+        "qdrant_collection": qdrant_collection,
+        "embedding_backend": emb_cfg.backend,
+        "embedding_model": emb_cfg.model,
+    }
+
     t0 = asyncio.get_event_loop().time()
-    resp = await client.ask(payload)
+    resp = await client.ask(payload, query_params=query_params)
     latency = int((asyncio.get_event_loop().time() - t0) * 1000)
 
     answer = resp.get("answer", "")
@@ -271,8 +283,22 @@ def run(
 
 
 @app.command()
-def score(run_name: str):
-    """Compute per-query metrics and aggregate them."""
+def score(
+    run_name: str,
+    reload_gold: bool = typer.Option(
+        False,
+        "--reload-gold",
+        help="Gold-Daten aus Dateien neu laden (sonst nur aus DB)",
+    ),
+):
+    """
+    Compute per-query metrics and aggregate them.
+
+    Flows:
+    - Erstmalig: load-dataset + load-answers, dann score
+    - Wiederholt: Nur score (nutzt DB-Daten)
+    - Aktualisierung: score --reload-gold
+    """
     pool = get_pool()
 
     with pool.connection() as conn, conn.cursor() as cur:
@@ -287,10 +313,7 @@ def score(run_name: str):
         run_id, cfg_json = row
         cfg = RunConfig(**cfg_json)
 
-    # Gold-Daten laden
-    qrels_path = Path(f"datasets/{cfg.dataset}_qrels.jsonl")
-    answers_path = Path(f"datasets/{cfg.dataset}_answers.jsonl")
-
+    # Query-ID Mapping
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "select id, query_id from ragrun.queries where dataset_name=%s",
@@ -298,29 +321,92 @@ def score(run_name: str):
         )
         qid_to_pk = {r[1]: r[0] for r in cur.fetchall()}
 
+    # ================================================================
+    # GOLD-DATEN: Nur laden wenn --reload-gold ODER nicht in DB
+    # ================================================================
+    qrels_path = Path(cfg.get_qrels_path())
+    answers_path = Path(cfg.get_answers_path())
+
+    # Prüfen ob Gold-Daten bereits in DB existieren
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM ragrun.gold_evidence ge
+            JOIN ragrun.queries q ON ge.query_pk = q.id
+            WHERE q.dataset_name = %s
+            """,
+            (cfg.dataset,),
+        )
+        qrels_exist = cur.fetchone()[0] > 0
+
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM ragrun.gold_answers ga
+            JOIN ragrun.queries q ON ga.query_pk = q.id
+            WHERE q.dataset_name = %s
+            """,
+            (cfg.dataset,),
+        )
+        answers_exist = cur.fetchone()[0] > 0
+
+    if reload_gold or not qrels_exist:
+        if qrels_path.exists():
+            logger.info(f"Lade Qrels aus {qrels_path}...")
+            load_qrels(cfg.dataset, qid_to_pk, str(qrels_path))
+        elif not qrels_exist:
+            logger.warning(f"Qrels nicht gefunden: {qrels_path}")
+    else:
+        logger.info(
+            "Qrels bereits in DB, überspringe Laden (--reload-gold zum Neu-Laden)"
+        )
+
+    if reload_gold or not answers_exist:
+        if answers_path.exists():
+            logger.info(f"Lade Answers aus {answers_path}...")
+            for qid, answers, explanation in load_answers_jsonl(str(answers_path)):
+                pk = qid_to_pk.get(qid)
+                if pk:
+                    upsert_gold_answers(pk, answers, explanation)
+        elif not answers_exist:
+            logger.warning(f"Answers nicht gefunden: {answers_path}")
+    else:
+        logger.info(
+            "Answers bereits in DB, überspringe Laden (--reload-gold zum Neu-Laden)"
+        )
+
+    # ================================================================
+    # GOLD-DATEN AUS DB LADEN
+    # ================================================================
     gold_map: Dict[int, Dict[str, int]] = {}
-    if qrels_path.exists():
-        load_qrels(cfg.dataset, qid_to_pk, str(qrels_path))
-        with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                select query_pk, chunk_id, relevance
-                from ragrun.qrels q
-                join ragrun.queries qq on q.query_pk = qq.id
-                where qq.dataset_name = %s
-                """,
-                (cfg.dataset,),
-            )
-            for qpk, cid, rel in cur.fetchall():
-                gold_map.setdefault(qpk, {})[cid] = rel
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT ge.query_pk, ge.chunk_id, ge.relevance
+            FROM ragrun.gold_evidence ge
+            JOIN ragrun.queries q ON ge.query_pk = q.id
+            WHERE q.dataset_name = %s
+            """,
+            (cfg.dataset,),
+        )
+        for qpk, cid, rel in cur.fetchall():
+            gold_map.setdefault(qpk, {})[cid] = rel
 
     gold_answers_map: Dict[int, List[str]] = {}
-    if answers_path.exists():
-        for qid, answers, explanation in load_answers_jsonl(str(answers_path)):
-            pk = qid_to_pk.get(qid)
-            if pk:
-                upsert_gold_answers(pk, answers, explanation)
-                gold_answers_map[pk] = answers
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT ga.query_pk, ga.answers
+            FROM ragrun.gold_answers ga
+            JOIN ragrun.queries q ON ga.query_pk = q.id
+            WHERE q.dataset_name = %s
+            """,
+            (cfg.dataset,),
+        )
+        for qpk, answers in cur.fetchall():
+            if answers:
+                gold_answers_map[qpk] = (
+                    answers if isinstance(answers, list) else [answers]
+                )
 
     # Run-Items laden
     with pool.connection() as conn, conn.cursor() as cur:
@@ -390,8 +476,8 @@ def score(run_name: str):
                     """
                     select chunk_id
                     from ragrun.retrieval_logs
-                    where run_id=%s and query_pk=%s and source = any(%s)
-                    order by array_position(%s, source), rank asc
+                    where run_id=%s and query_pk=%s and source = any(%s::text[])
+                    order by array_position(%s::text[], source), rank asc
                     """,
                     (run_id, query_pk, sources, sources),
                 )
@@ -418,7 +504,14 @@ def score(run_name: str):
         # ============================================================
         if gold_answers and answer_text:
             best_gold = gold_answers[0]
-            gen_metrics = compute_generation_metrics(answer_text, best_gold)
+            eval_cfg = cfg.get_evaluation_config()
+
+            gen_metrics = compute_generation_metrics(
+                answer_text,
+                best_gold,
+                semantic_sim_model=eval_cfg.semantic_sim_model,
+                bertscore_model=eval_cfg.bertscore_model,
+            )
             for k, v in gen_metrics.items():
                 upsert_score(run_id, query_pk, k, float(v))
 
@@ -605,6 +698,8 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
     )
 
     variants = raw.get("variants", [])
+    variant_names: List[str] = []  # Sammle alle Variant-Namen
+
     for var in variants:
         name = var.get("name", "UNNAMED")
         override = var.get("override", {})
@@ -621,15 +716,6 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
                 else:
                     cfg.factors[kk] = vv
 
-        # Run-Name anpassen
-        if "qa_payload" in override and "model" in override["qa_payload"]:
-            cfg.run_name += "_" + str(override["qa_payload"]["model"]).split(":")[0]
-        if "factors" in override and "rerank" in override["factors"]:
-            rerank_enabled = override["factors"]["rerank"].get("enabled", False)
-            cfg.run_name += "_ce" + ("ON" if rerank_enabled else "OFF")
-        if "qa_payload" in override and "top_k" in override["qa_payload"]:
-            cfg.run_name += f"_k{override['qa_payload']['top_k']}"
-
         temp_cfg_path = Path(f"configs/_temp_{name}.yaml")
         temp_cfg_path.write_text(
             yaml.dump(cfg.model_dump(), default_flow_style=False, allow_unicode=True)
@@ -639,8 +725,29 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
         if execute:
             run(str(temp_cfg_path))
             score(cfg.run_name)
+            variant_names.append(cfg.run_name)
 
         temp_cfg_path.unlink(missing_ok=True)
+
+    if execute and variant_names:
+        from .reporting import generate_study_report
+
+        study_name = raw.get("name", Path(study_config).stem)
+        primary_metrics = raw.get("metrics", {}).get(
+            "primary",
+            ["recall@5", "factual_consistency_normalized", "semantic_sim"],
+        )
+
+        try:
+            report_path = generate_study_report(
+                study_name=study_name,
+                baseline_run_name=baseline_cfg.run_name,
+                variant_run_names=variant_names,
+                primary_metrics=primary_metrics,
+            )
+            typer.echo(f"\n📊 Study Report: {report_path}")
+        except Exception as e:
+            typer.echo(f"⚠️ Study Report Fehler: {e}")
 
 
 @app.command()
@@ -694,5 +801,50 @@ class QueryRow(TypedDict):
     definition_id: str | None
 
 
+@app.command()
+def report(
+    run_name: str,
+    baseline: Optional[str] = None,
+    out_dir: str = "reports",
+):
+    """Generate detailed report for a run, optionally comparing to baseline."""
+    pool = get_pool()
+
+    # Run-ID ermitteln
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM ragrun.eval_runs WHERE run_name = %s", (run_name,))
+        row = cur.fetchone()
+        if not row:
+            typer.echo(f"Run '{run_name}' nicht gefunden.")
+            raise typer.Exit(1)
+        run_id = row[0]
+
+        baseline_id = None
+        if baseline:
+            cur.execute(
+                "SELECT id FROM ragrun.eval_runs WHERE run_name = %s", (baseline,)
+            )
+            row = cur.fetchone()
+            if row:
+                baseline_id = row[0]
+
+    from .reporting import aggregate_and_store
+
+    # Alle Metriken
+    all_metrics = []
+    for group in METRIC_GROUPS.values():
+        all_metrics.extend(group["metrics"])
+
+    report_path = aggregate_and_store(
+        run_id=run_id,
+        metrics=all_metrics,
+        out_dir=out_dir,
+        baseline_run_id=baseline_id,
+    )
+
+    typer.echo(f"📊 Report: {report_path}")
+
+
 if __name__ == "__main__":
+    setup_logging()
     app()

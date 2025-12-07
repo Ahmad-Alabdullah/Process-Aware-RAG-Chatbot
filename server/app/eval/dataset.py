@@ -1,8 +1,11 @@
 from __future__ import annotations
 import json
-import logging
 from typing import Iterable, Dict, Any, List, Optional
+
+from app.core.clients import get_logger
 from .db import upsert_query, insert_qrels, upsert_gold_gating
+
+logger = get_logger(__name__)
 
 
 def load_queries(dataset_name: str, path: str) -> Dict[str, int]:
@@ -78,7 +81,7 @@ def load_qrels(dataset_name: str, qid_to_pk: Dict[str, int], path: str) -> None:
 
             if qid not in qid_to_pk:
                 unknown_queries += 1
-                logging.warning(
+                logger.warning(
                     "QREL-Zeile %d referenziert unbekannte query_id=%s",
                     line_no,
                     qid,
@@ -94,7 +97,7 @@ def load_qrels(dataset_name: str, qid_to_pk: Dict[str, int], path: str) -> None:
                 try:
                     rel = int(rel_raw)
                 except Exception:
-                    logging.warning(
+                    logger.warning(
                         "QREL-Zeile %d: ungültiger relevance-Wert %r, fallback=1",
                         line_no,
                         rel_raw,
@@ -122,14 +125,14 @@ def load_qrels(dataset_name: str, qid_to_pk: Dict[str, int], path: str) -> None:
             expected_task_names=gating.get("expected_task_names", []),
         )
 
-    logging.info(
+    logger.info(
         "load_qrels: %d Queries mit Chunks, %d mit Gating-Kontext",
         len(buf),
         len(gating_buf),
     )
 
     if unknown_queries:
-        logging.warning(
+        logger.warning(
             "load_qrels: %d QREL-Zeilen referenzierten unbekannte Queries.",
             unknown_queries,
         )

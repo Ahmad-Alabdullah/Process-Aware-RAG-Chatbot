@@ -19,6 +19,8 @@ create table if not exists ragrun.queries (
   roles text[],
   current_node_id text,
   definition_id text,
+  query_type text not null default 'mixed',
+  expected_source text not null default 'both',
   unique (dataset_name, query_id)
 );
 
@@ -31,7 +33,6 @@ create table if not exists ragrun.gold_evidence (
   unique (query_pk, chunk_id)
 );
 
--- NEU: Gold Gating für PROCESS-Queries
 create table if not exists ragrun.gold_gating (
   query_pk bigint primary key references ragrun.queries(id) on delete cascade,
   expected_lane_ids text[] not null default '{}',
@@ -108,4 +109,16 @@ create table if not exists ragrun.run_items (
     error_message text,                          
     meta         jsonb default '{}'::jsonb,      
     primary key (run_id, query_id)
+);
+
+CREATE TABLE IF NOT EXISTS ragrun.retrieval_logs (
+    id SERIAL PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES ragrun.eval_runs(id) ON DELETE CASCADE,
+    query_pk INTEGER NOT NULL REFERENCES ragrun.queries(id) ON DELETE CASCADE,
+    chunk_id TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    score FLOAT DEFAULT 0.0,
+    source TEXT DEFAULT 'rrf',  -- 'rrf' oder 'ce' (cross-encoder)
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(run_id, query_pk, chunk_id)
 );

@@ -53,21 +53,26 @@ def upsert_query(
     roles: Optional[List[str]],
     current_node_id: Optional[str] = None,
     definition_id: Optional[str] = None,
+    query_type: str = "mixed",
+    expected_source: str = "both",
 ) -> int:
     pool = get_pool()
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
             insert into ragrun.queries 
-                (dataset_name, query_id, text, process_name, process_id, roles, current_node_id, definition_id)
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
+                (dataset_name, query_id, text, process_name, process_id, roles, 
+                 current_node_id, definition_id, query_type, expected_source)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             on conflict (dataset_name, query_id) do update
             set text = excluded.text,
                 process_name = excluded.process_name,
                 process_id = excluded.process_id,
                 roles = excluded.roles,
                 current_node_id = excluded.current_node_id,
-                definition_id = excluded.definition_id
+                definition_id = excluded.definition_id,
+                query_type = excluded.query_type,
+                expected_source = excluded.expected_source
             returning id
             """,
             (
@@ -79,6 +84,8 @@ def upsert_query(
                 roles,
                 current_node_id,
                 definition_id,
+                query_type,
+                expected_source,
             ),
         )
         conn.commit()
@@ -345,3 +352,36 @@ def get_gold_gating(query_pk: int) -> Optional[Dict[str, List[str]]]:
             "expected_lane_names": row[2] or [],
             "expected_task_names": row[3] or [],
         }
+
+
+def upsert_retrieval_log(
+    run_id: int,
+    query_pk: int,
+    chunk_id: str,
+    rank: int,
+    score: float,
+    source: str = "rrf",
+) -> None:
+    """
+    Speichert einen Retrieval-Log Eintrag.
+
+    Args:
+        run_id: ID des Evaluation-Runs
+        query_pk: ID der Query
+        chunk_id: ID des Chunks
+        rank: Position im Ranking (1-indexed)
+        score: Score (RRF oder Rerank)
+        source: "rrf" (RRF-Fusion) oder "ce" (Cross-Encoder)
+    """
+    pool = get_pool()
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into ragrun.retrieval_logs (run_id, query_pk, chunk_id, rank, score, source)
+            values (%s, %s, %s, %s, %s, %s)
+            on conflict (run_id, query_pk, chunk_id) do update
+            set rank = excluded.rank, score = excluded.score, source = excluded.source
+            """,
+            (run_id, query_pk, chunk_id, rank, score, source),
+        )
+        conn.commit()

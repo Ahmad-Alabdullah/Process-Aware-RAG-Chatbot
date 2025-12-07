@@ -1,5 +1,6 @@
+from fastapi import Form
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Literal, Optional
 
 
 class ManualChunk(BaseModel):
@@ -8,3 +9,4 @@ class ManualChunk(BaseModel):
     meta: Dict[str, Any] = {}
     process_name: Optional[str] = None
     tags: Optional[str] = None
+    chunking_strategy: Literal["by_title", "semantic"] = None

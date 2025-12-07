@@ -15,11 +15,17 @@ class Settings(BaseSettings):
     QDRANT_URL: str
     QDRANT_COLLECTION: str = "chunks"
 
+    OS_QWEN3_INDEX: str
+    QDRANT_QWEN3_COLLECTION: str
+
+    OS_SEMANTIC_INDEX: str
+    QDRANT_SEMANTIC_COLLECTION: str
+
     # === Embeddings & Modelle ===
-    EMBEDDING_BACKEND: str = "ollama"  # options: 'ollama', 'hf'
+    EMBEDDING_BACKEND: str = "hf"  # options: 'ollama', 'hf'
     EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     OLLAMA_BASE: str = "http://ollama:11434"
-    OLLAMA_EMBED_MODEL: str = "all-minilm"
+    OLLAMA_EMBED_MODEL: str = "qwen3-embedding:4b"
     OLLAMA_MODEL: str
 
     # === Retrieval ===
@@ -43,6 +49,7 @@ class Settings(BaseSettings):
     NEW_AFTER_N_CHARS: int
     OVERLAP: int
     OCR_LANGUAGES: str
+    MAX_SEMANTIC_CHARACTERS: int
 
     # === Pydantic Settings Config ===
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

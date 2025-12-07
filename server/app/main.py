@@ -5,9 +5,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.clients import get_redis
+from app.core.clients import get_redis, setup_logging
 from app.services.pipeline import consume_uploads
 from app.routers import ingestion, search, qa, bpmn, whitelist
+
+setup_logging(level="INFO")
 
 tags_metadata = [
     {"name": "ingestion", "description": "Dokumente hochladen & verwalten"},

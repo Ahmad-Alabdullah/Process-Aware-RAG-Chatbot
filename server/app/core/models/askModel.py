@@ -8,6 +8,16 @@ class AskBody(BaseModel):
     query: str
     top_k: int = int(settings.TOP_K)
 
+    # Reranking (Cross-Encoder)
+    use_rerank: bool = Field(
+        default=False,
+        description="Cross-Encoder Reranking aktivieren (Jina Reranker v3)",
+    )
+    rerank_top_n: int = Field(
+        default=50,
+        description="Anzahl Kandidaten für Reranking vor finale Top-K Auswahl",
+    )
+
     # HYDE + LLM
     use_hyde: bool = False
     model: str = settings.OLLAMA_MODEL
@@ -27,21 +37,22 @@ class AskBody(BaseModel):
     process_id: Optional[str] = Field(
         default=None, description="BPMN Process-ID (xmlId)"
     )
-    definition_id: Optional[str] = Field(
-        default=None, description="BPMN Definition-ID für Whitelist-Lookup"
-    )
+    definition_id: Optional[str] = Field(default=None, description="BPMN Definition-ID")
     current_node_id: Optional[str] = Field(
         default=None,
-        description="Aktueller BPMN-Knoten (xmlId) - aktiviert lokales Gating",
+        description="Aktuelle Node-ID im BPMN für lokalen Kontext (aktiviert GATING_ENABLED)",
     )
 
-    # Ablation-Study: Erzwingt PROCESS_CONTEXT Modus
+    # Ablation-Study: Grober Prozesskontext ohne Lokalisierung
     force_process_context: bool = Field(
         default=False,
-        description="Nur für Ablation: Erzwingt groben Prozesskontext ohne lokale Position",
+        description="Erzwingt PROCESS_CONTEXT Modus (nur für Ablation-Study)",
     )
 
-    # Prompt-Stil
-    prompt_style: str = Field(
-        default="baseline", description="Prompt-Stil: baseline, fewshot, cot"
+    # Prompt-Konfiguration
+    prompt_style: str = Field(default="baseline", description="Prompt-Style")
+
+    # Debug
+    debug_return: bool = Field(
+        default=False, description="Debug-Informationen zurückgeben"
     )

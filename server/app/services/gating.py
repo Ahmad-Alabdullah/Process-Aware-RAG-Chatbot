@@ -300,7 +300,7 @@ def _compute_process_overview_with_decisions(
         )
 
     except Exception as e:
-        logger.warning(f"Process overview fehlgeschlagen: {e}")
+        logger.info(f"Process overview fehlgeschlagen: {e}")
         return ProcessOverview(process_name=process_name or "Unbekannt")
 
 
@@ -324,7 +324,7 @@ def _compute_local_position_with_gateways(
                 f"{len(position.allowed_nodes)} Nodes für {roles}"
             )
         except Exception as e:
-            logger.warning(f"Whitelist-Lookup fehlgeschlagen: {e}")
+            logger.info(f"Whitelist-Lookup fehlgeschlagen: {e}")
 
     # 2. Lokale Ansicht MIT Gateways
     if process_id and current_node_id:
@@ -375,7 +375,7 @@ def _compute_local_position_with_gateways(
                 ]
 
         except Exception as e:
-            logger.warning(f"Local process view fehlgeschlagen: {e}")
+            logger.info(f"Local process view fehlgeschlagen: {e}")
 
     return position
 
@@ -579,3 +579,62 @@ def _build_gating_hint_with_gateways(result: GatingResult) -> str:
         )
 
     return "\n".join(parts)
+
+
+def _get_process_tasks_from_neo4j(process_id: str) -> Dict[str, Any]:
+    """
+    Holt ALLE Task-Namen und Lane-Zuordnungen aus Neo4j.
+
+    Returns:
+        {
+            "all_task_names": ["Antrag erstellen", "Genehmigung prüfen", ...],
+            "lane_task_mapping": {
+                "Antragsteller": ["Antrag erstellen", ...],
+                "Vorgesetzter": ["Genehmigung erteilen", ...],
+            }
+        }
+    """
+    if not process_id:
+        return {"all_task_names": [], "lane_task_mapping": {}}
+
+    try:
+        from app.core.clients import get_neo4j
+
+        driver = get_neo4j()
+
+        with driver.session() as s:
+            result = s.run(
+                """
+                MATCH (p:Process {xmlId:$pid})-[:CONTAINS]->(n:Node)
+                WHERE NOT n.type CONTAINS 'Gateway' 
+                  AND NOT n.type CONTAINS 'Event'
+                OPTIONAL MATCH (l:Lane)-[:CONTAINS]->(n)
+                RETURN n.name AS task_name, 
+                       n.type AS task_type,
+                       l.name AS lane_name
+                """,
+                pid=process_id,
+            ).data()
+
+        all_tasks: List[str] = []
+        lane_mapping: Dict[str, List[str]] = {}
+
+        for row in result:
+            task_name = row.get("task_name")
+            lane_name = row.get("lane_name") or "Unbekannt"
+
+            if task_name:
+                all_tasks.append(task_name)
+                if lane_name not in lane_mapping:
+                    lane_mapping[lane_name] = []
+                if task_name not in lane_mapping[lane_name]:
+                    lane_mapping[lane_name].append(task_name)
+
+        return {
+            "all_task_names": list(set(all_tasks)),
+            "lane_task_mapping": lane_mapping,
+        }
+
+    except Exception as e:
+        logger.info(f"Neo4j-Lookup für Prozess {process_id} fehlgeschlagen: {e}")
+        return {"all_task_names": [], "lane_task_mapping": {}}

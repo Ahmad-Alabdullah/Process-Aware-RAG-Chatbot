@@ -26,6 +26,20 @@ services:
     ports:
       - "5432:5432"
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+
   opensearch:
     image: opensearchproject/opensearch:latest
     environment:
@@ -81,6 +95,9 @@ services:
       - "11434:11434"
     volumes:
       - "ollama:/root/.ollama"
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_FLASH_ATTENTION=1
     deploy:
       resources:
         reservations:
@@ -94,3 +111,4 @@ volumes:
   neo4j: {}
   uploads: {}
   ollama: {}
+  pgadmin_data: {}

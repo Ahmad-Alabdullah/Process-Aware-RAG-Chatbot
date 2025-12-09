@@ -62,6 +62,7 @@ create table if not exists ragrun.eval_run_items (
   confidence double precision,
   whitelist_violation boolean,
   decision text,
+  meta jsonb default '{}'::jsonb,
   created_at timestamptz not null default now(),
   primary key (run_id, query_pk)
 );
@@ -99,26 +100,4 @@ create table if not exists ragrun.aggregates (
   primary key (run_id, metric)
 );
 
-create table if not exists ragrun.run_items (
-    run_id       int references ragrun.eval_runs(id) on delete cascade,
-    query_id     text references ragrun.queries(id) on delete cascade,
-    answer_text  text,
-    citations    jsonb,
-    latency_ms   double precision,
-    status       text default 'ok',              
-    error_message text,                          
-    meta         jsonb default '{}'::jsonb,      
-    primary key (run_id, query_id)
-);
-
-CREATE TABLE IF NOT EXISTS ragrun.retrieval_logs (
-    id SERIAL PRIMARY KEY,
-    run_id INTEGER NOT NULL REFERENCES ragrun.eval_runs(id) ON DELETE CASCADE,
-    query_pk INTEGER NOT NULL REFERENCES ragrun.queries(id) ON DELETE CASCADE,
-    chunk_id TEXT NOT NULL,
-    rank INTEGER NOT NULL,
-    score FLOAT DEFAULT 0.0,
-    source TEXT DEFAULT 'rrf',  -- 'rrf' oder 'ce' (cross-encoder)
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(run_id, query_pk, chunk_id)
-);
+-- Removed: ragrun.run_items (unused, merged into eval_run_items)

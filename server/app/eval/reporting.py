@@ -151,7 +151,7 @@ def aggregate_and_store(
     # Run-Info laden
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT run_name, config_json, created_at FROM ragrun.eval_runs WHERE id = %s",
+            "SELECT name, config_json, created_at FROM ragrun.eval_runs WHERE id = %s",
             (run_id,),
         )
         row = cur.fetchone()
@@ -163,7 +163,7 @@ def aggregate_and_store(
     by_metric: Dict[str, List[float]] = {m: [] for m in metrics}
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT metric, value FROM ragrun.eval_scores WHERE run_id = %s", (run_id,)
+            "SELECT metric, value FROM ragrun.scores WHERE run_id = %s", (run_id,)
         )
         for metric, value in cur.fetchall():
             if metric in by_metric:
@@ -174,7 +174,7 @@ def aggregate_and_store(
     if baseline_run_id:
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT metric, value FROM ragrun.eval_scores WHERE run_id = %s",
+                "SELECT metric, value FROM ragrun.scores WHERE run_id = %s",
                 (baseline_run_id,),
             )
             baseline_by_metric: Dict[str, List[float]] = {}
@@ -214,6 +214,25 @@ def aggregate_and_store(
     md_path = _write_markdown_report(
         out_path, run_id, run_name, created_at, config, aggregates, baseline_run_id
     )
+
+    # CSV Report
+    baseline_aggs = None
+    if baseline_run_id:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT metric, value, n, ci_low, ci_high FROM ragrun.aggregates WHERE run_id = %s",
+                (baseline_run_id,),
+            )
+            baseline_aggs = {}
+            for metric, value, n, ci_low, ci_high in cur.fetchall():
+                baseline_aggs[metric] = {
+                    "mean": float(value) if value else 0.0,
+                    "n": n or 0,
+                    "ci_low": float(ci_low) if ci_low else 0.0,
+                    "ci_high": float(ci_high) if ci_high else 0.0,
+                }
+    csv_path = _write_csv_report(out_path, run_id, run_name, aggregates, baseline_aggs)
+    logger.info(f"CSV Report: {csv_path}")
 
     return str(md_path)
 
@@ -334,6 +353,52 @@ def _write_markdown_report(
     md_path.write_text("\n".join(lines), encoding="utf-8")
 
     return md_path
+
+
+def _write_csv_report(
+    out_path: Path,
+    run_id: int,
+    run_name: str,
+    aggregates: Dict[str, Dict[str, Any]],
+    baseline_aggregates: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Path:
+    """Schreibt CSV-Report für maschinelle Verarbeitung."""
+    csv_path = out_path / f"run_{run_id}_{run_name}.csv"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        if baseline_aggregates:
+            fieldnames = [
+                "metric",
+                "mean",
+                "ci_low",
+                "ci_high",
+                "n",
+                "baseline_mean",
+                "delta",
+            ]
+        else:
+            fieldnames = ["metric", "mean", "ci_low", "ci_high", "n"]
+
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for metric, agg in sorted(aggregates.items()):
+            row = {
+                "metric": metric,
+                "mean": f"{agg['mean']:.6f}",
+                "ci_low": f"{agg['ci_low']:.6f}",
+                "ci_high": f"{agg['ci_high']:.6f}",
+                "n": agg["n"],
+            }
+
+            if baseline_aggregates and metric in baseline_aggregates:
+                baseline_mean = baseline_aggregates[metric]["mean"]
+                row["baseline_mean"] = f"{baseline_mean:.6f}"
+                row["delta"] = f"{agg['mean'] - baseline_mean:.6f}"
+
+            writer.writerow(row)
+
+    return csv_path
 
 
 # ============================================================
@@ -541,6 +606,26 @@ def generate_study_report(
     with open(yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(yaml_data, f, default_flow_style=False, allow_unicode=True)
 
+    # CSV für Study
+    csv_path = out_path / f"study_{study_name}.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        # Header: run_name + alle Metriken
+        all_metrics = list(set(m for run in all_runs for m in run["aggregates"].keys()))
+        fieldnames = ["run_name", "is_baseline"] + sorted(all_metrics)
+
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for run in all_runs:
+            row = {
+                "run_name": run["run_name"],
+                "is_baseline": run["run_name"] == baseline_run_name,
+            }
+            for m in all_metrics:
+                val = run["aggregates"].get(m, {}).get("mean", "")
+                row[m] = f"{val:.6f}" if isinstance(val, float) else ""
+            writer.writerow(row)
+
     return str(md_path)
 
 
@@ -548,7 +633,7 @@ def _load_run_data(pool, run_name: str) -> Optional[Dict[str, Any]]:
     """Lädt alle Daten für einen Run."""
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT id, config_json FROM ragrun.eval_runs WHERE run_name = %s",
+            "SELECT id, config_json FROM ragrun.eval_runs WHERE name = %s",
             (run_name,),
         )
         row = cur.fetchone()
@@ -559,16 +644,17 @@ def _load_run_data(pool, run_name: str) -> Optional[Dict[str, Any]]:
 
         # Aggregierte Metriken laden
         cur.execute(
-            "SELECT metric, mean_val, n, ci_json FROM ragrun.aggregates WHERE run_id = %s",
+            "SELECT metric, value, n, ci_low, ci_high FROM ragrun.aggregates WHERE run_id = %s",
             (run_id,),
         )
 
         aggregates = {}
-        for metric, mean_val, n, ci_json in cur.fetchall():
+        for metric, value, n, ci_low, ci_high in cur.fetchall():
             aggregates[metric] = {
-                "mean": float(mean_val),
-                "n": n,
-                "ci": ci_json,
+                "mean": float(value) if value else 0.0,
+                "n": n or 0,
+                "ci_low": float(ci_low) if ci_low else 0.0,
+                "ci_high": float(ci_high) if ci_high else 0.0,
             }
 
         return {

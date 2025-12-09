@@ -238,7 +238,7 @@ def rouge_l(pred: str, gold: str) -> Dict[str, float]:
 
 
 def semantic_similarity(
-    pred: str, gold: str, model: str = "EmbeddingGemma:300m"
+    pred: str, gold: str, model: str = "embeddinggemma:latest"
 ) -> float:
     """
     Embedding-basierte semantische Ähnlichkeit.
@@ -279,7 +279,7 @@ def semantic_similarity(
 # BERTSCORE
 # ============================================================
 
-_bertscore_model = None
+_bertscore_models = {}
 
 
 def _get_bertscore(model: str = "deepset/gbert-large"):
@@ -298,8 +298,9 @@ def _get_bertscore(model: str = "deepset/gbert-large"):
 
             _bertscore_models[model] = BERTScorer(
                 model_type=model,
+                lang="de",
                 num_layers=num_layers,
-                rescale_with_baseline=True,
+                rescale_with_baseline=False,  # No baseline available for gbert-large
                 device=device,
             )
             logger.info(f"BERTScore geladen (model={model}, device={device})")
@@ -353,7 +354,7 @@ def bert_score(
 def compute_generation_metrics(
     pred: str,
     gold: str,
-    semantic_sim_model: str = "EmbeddingGemma:300m",
+    semantic_sim_model: str = "embeddinggemma:latest",
     bertscore_model: str = "deepset/gbert-large",
 ) -> Dict[str, float]:
     """

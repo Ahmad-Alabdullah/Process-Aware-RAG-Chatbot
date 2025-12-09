@@ -9,7 +9,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from app.core.clients import get_opensearch, get_qdrant, get_neo4j, get_logger
+from app.core.clients import (
+    get_opensearch,
+    get_qdrant,
+    get_neo4j,
+    get_logger,
+    setup_logging,
+)
 from app.core.config import settings
 from app.eval.db import get_pool
 
@@ -135,14 +141,16 @@ def check_ollama_models():
     errors = []
 
     required_models = [
-        "qwen3:8b",  # QA-Generierung
-        "atla/selene-mini",  # LLM-Judge
+        "qwen3:8b",
+        "atla/selene-mini",
+        "llama3.1:8b",
+        "ministral-3:8b",
+        "embeddinggemma:latest",
+        "bge-m3:latest",
+        "qwen3-embedding:4b",
     ]
 
-    optional_models = [
-        "EmbeddingGemma:300m",  # Semantic Similarity
-        "qwen3-embedding:4b",  # Alternative Embeddings
-    ]
+    # optional_models = []
 
     try:
         resp = requests.get(f"{settings.OLLAMA_BASE}/api/tags", timeout=10)
@@ -155,11 +163,11 @@ def check_ollama_models():
             else:
                 errors.append(f"❌ Ollama Model '{model}' fehlt (ollama pull {model})")
 
-        for model in optional_models:
-            if model in available or any(model in m for m in available):
-                logger.info(f"✅ Ollama Model '{model}': verfügbar (optional)")
-            else:
-                logger.warning(f"⚠️ Ollama Model '{model}' fehlt (optional)")
+        # for model in optional_models:
+        #     if model in available or any(model in m for m in available):
+        #         logger.info(f"✅ Ollama Model '{model}': verfügbar (optional)")
+        #     else:
+        #         logger.warning(f"⚠️ Ollama Model '{model}' fehlt (optional)")
 
     except Exception as e:
         errors.append(f"❌ Ollama nicht erreichbar: {e}")
@@ -178,7 +186,7 @@ def check_db_schema():
         "ragrun.gold_answers",
         "ragrun.gold_gating",
         "ragrun.eval_run_items",
-        "ragrun.eval_scores",
+        "ragrun.scores",
         "ragrun.retrieval_logs",
         "ragrun.aggregates",
     ]
@@ -248,4 +256,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_logging()
     sys.exit(main())

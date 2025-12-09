@@ -1,6 +1,6 @@
 import time as time_module
+from typing import Optional
 from fastapi import APIRouter, Query
-from transformers import Optional
 
 from app.core.models.askModel import AskBody
 from app.core.prompt_builder import build_prompt

@@ -46,14 +46,14 @@ factors:
       model: "qwen3:8b"
       temperature: 0.1      # Niedriges T für Faktentreue
       max_tokens: 2048
-      num_ctx: 8192
+      num_ctx: 4096
     
     # Chain-of-Thought
     cot:
       model: "qwen3:8b"
       temperature: 0.2      # Moderates T für Reasoning
       max_tokens: 3072
-      num_ctx: 8192
+      num_ctx: 4096
   
   prompt:
     style: "baseline"
@@ -62,7 +62,7 @@ factors:
     use_llm_judge: true
     judge_model: "atla/selene-mini"
     judge_temperature: 0.0  # IMMER 0.0 für Reproduzierbarkeit
-    semantic_sim_model: "EmbeddingGemma:300m"
+    semantic_sim_model: "embeddinggemma:latest"
     bertscore_model: "deepset/gbert-large"
 
 ranking_sources: ["ce", "rrf"]

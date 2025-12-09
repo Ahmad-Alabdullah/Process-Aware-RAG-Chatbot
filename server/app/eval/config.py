@@ -45,7 +45,7 @@ class EvaluationConfig(BaseModel):
 
     use_llm_judge: bool = Field(default=True)
     judge_model: str = Field(default="atla/selene-mini")
-    semantic_sim_model: str = Field(default="EmbeddingGemma:300m")
+    semantic_sim_model: str = Field(default="embeddinggemma:latest")
     bertscore_model: str = Field(default="deepset/gbert-large")
 
 

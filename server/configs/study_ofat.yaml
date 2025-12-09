@@ -1,37 +1,163 @@
 baseline: "configs/baseline.yaml"
+
+description: |
+  OFAT (One Factor At a Time) Sensitivity Analysis
+  
+  Testet jeden Faktor einzeln gegen die Baseline.
+  Ergebnisse zeigen, welche Faktoren den größten Einfluss haben.
+
 variants:
-  - name: "OFAT_llm_llama3.1_8b"               # LLM
-    override: {qa_payload: {model: "qwen2.5:7b-instruct"}}
-  - name: "OFAT_llm_mistral_nemo"
-    override: {qa_payload: {model: "mistral-7B-Instruct"}}
+  # === LLM MODEL ===
+  - name: "OFAT_llm_llama3.1:8b"
+    override: 
+      qa_payload: 
+        model: "llama3.1:8b"
+      factors:
+        llm:
+          qa:
+            model: "llama3.1:8b"
+            num_ctx: 4096
+    description: "Alternative: Llama 3.1 8B"
 
-  - name: "OFAT_emb_mpnet"                      # Embeddings → separater Index (neues dataset)
-    override: {dataset: "demo_mpnet"}
-  - name: "OFAT_emb_minilm_multilingual"
-    override: {dataset: "demo_minilm_multilingual"}
+  # === TOP-K ===
+  - name: "OFAT_k3"
+    override: 
+      qa_payload: 
+        top_k: 3
+    description: "Weniger Kontext: Top-3"
 
-  - name: "OFAT_k3"                              # k
-    override: {qa_payload: {top_k: 3}}
   - name: "OFAT_k8"
-    override: {qa_payload: {top_k: 8}}
+    override: 
+      qa_payload: 
+        top_k: 8
+    description: "Mehr Kontext: Top-8"
 
-  - name: "OFAT_rrf_k30"                         # RRF_K
-    override: {factors: {retrieval: {rrf_k: 30}}}
-  - name: "OFAT_rrf_k90"
-    override: {factors: {retrieval: {rrf_k: 90}}}
+  - name: "OFAT_k10"
+    override: 
+      qa_payload: 
+        top_k: 10
+    description: "Viel Kontext: Top-10"
 
-  - name: "OFAT_ce_on_minilm6"                   # Reranker
-    override: {factors: {rerank: {ce: true, ce_model: "cross-encoder/ms-marco-MiniLM-L-6-v2", topN: 50, topk_prompt: 5}}}
+  - name: "OFAT_ministral-3:8b"
+    override: 
+      qa_payload: 
+        model: "ministral-3:8b"
+      factors:
+        llm:
+          qa:
+            model: "ministral-3:8b"
+            num_ctx: 4096
+    description: "Alternative: Mistral 3 8B"
 
-  - name: "OFAT_repacking_reverse"               # Repacking
-    override: {factors: {prompt: {repacking: "reverse"}}}
+  # === RERANKING ===
+  - name: "OFAT_rerank_on"
+    override: 
+      qa_payload:
+        use_rerank: true
+        rerank_top_n: 50
+      factors: 
+        rerank: 
+          enabled: true
+          model: "jinaai/jina-reranker-v3"
+          top_n: 50
+    description: "Cross-Encoder Reranking aktiviert"
 
-  - name: "OFAT_prompt_fewshot"                  # Promptstil
-    override: {factors: {prompt: {style: "fewshot"}}}
+  # === PROMPT STYLE ===
+  - name: "OFAT_prompt_fewshot"
+    override: 
+      qa_payload: 
+        prompt_style: "fewshot"
+      factors:
+        prompt:
+          style: "fewshot"
+    description: "Few-Shot Prompting"
+
   - name: "OFAT_prompt_cot"
-    override: {factors: {prompt: {style: "cot", self_critique: true}}}
+    override: 
+      qa_payload: 
+        prompt_style: "cot"
+      factors:
+        prompt:
+          style: "cot"
+    description: "Chain-of-Thought Prompting"
 
-  - name: "OFAT_chunk_900_150"                   # Chunk‑Profile (Indexwechsel → neues dataset)
-    override: {dataset: "demo_c900_o150"}
-  - name: "OFAT_chunk_1200_200"
-    override: {dataset: "demo_c1200_o200"}
+  - name: "OFAT_prompt_structured"
+    override: 
+      qa_payload: 
+        prompt_style: "structured"
+      factors:
+        prompt:
+          style: "structured"
+    description: "Strukturierte Antworten"
+
+  # === LLM TEMPERATURE ===
+  - name: "OFAT_temp_0.0"
+    override: 
+      factors:
+        llm:
+          qa:
+            temperature: 0.0
+    description: "Deterministisch (T=0.0)"
+
+  - name: "OFAT_temp_0.3"
+    override: 
+      factors:
+        llm:
+          qa:
+            temperature: 0.3
+    description: "Etwas kreativer (T=0.3)"
+
+  # === EMBEDDING + CHUNKING KOMBINATIONEN ===
+  
+  # by_title Chunks + Qwen3 Embedding
+  - name: "OFAT_embed_qwen3_bytitle"
+    override: 
+      factors:
+        embeddings:
+          backend: "ollama"
+          model: "qwen3-embedding:4b"
+          index_suffix: "qwen3"
+        chunking:
+          strategy: "by_title"
+          max_characters: 1800
+    description: "Qwen3 Embedding auf by_title Chunks"
+  
+  # Semantic Chunks + MiniLM Embedding
+  - name: "OFAT_chunk_semantic_minilm"
+    override:
+      factors:
+        embeddings:
+          backend: "hf"
+          model: "sentence-transformers/all-minilm-l6-v2"
+          index_suffix: "semantic"
+        chunking:
+          strategy: "semantic"
+    description: "Semantic Chunking mit MiniLM"
+
+  # Semantic Chunks + Qwen3 Embedding
+  - name: "OFAT_chunk_semantic_qwen3"
+    override:
+      factors:
+        embeddings:
+          backend: "ollama"
+          model: "qwen3-embedding:4b"
+          index_suffix: "semantic_qwen3"
+        chunking:
+          strategy: "semantic"
+    description: "Semantic Chunking mit Qwen3"
+
+# Metriken für Vergleich
+metrics:
+  primary:
+    - recall@5
+    - ndcg@5
+    - factual_consistency_normalized
+    - semantic_sim
+  
+  secondary:
+    - recall@3
+    - recall@10
+    - mrr@5
+    - bertscore_f1
+    - content_f1
+    - citation_recall

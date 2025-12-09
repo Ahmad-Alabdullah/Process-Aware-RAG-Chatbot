@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
 
+    PGADMIN_EMAIL: str
+    PGADMIN_PASSWORD: str
+
     OPENSEARCH_URL: str
     OS_INDEX: str = "chunks"
 

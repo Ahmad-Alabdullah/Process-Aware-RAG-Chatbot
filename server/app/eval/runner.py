@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio, yaml
 from typing import Optional, Dict, Any, List, TypedDict
 import typer
+import httpx
 from pathlib import Path
 from app.core.clients import get_logger, setup_logging
 from app.eval.metrics.faithfulness import compute_faithfulness_metrics
@@ -30,6 +31,77 @@ from .reporting import METRIC_GROUPS, aggregate_and_store
 app = typer.Typer(help="RAG Evaluation Runner")
 
 logger = get_logger(__name__)
+
+OLLAMA_BASE_URL = "http://localhost:11434"
+
+
+def _unload_ollama_model(model: str, base_url: str = OLLAMA_BASE_URL) -> bool:
+    """
+    Unloads a specific Ollama model from VRAM by sending keep_alive=0.
+    """
+    try:
+        resp = httpx.post(
+            f"{base_url}/api/generate",
+            json={"model": model, "prompt": "", "keep_alive": 0},
+            timeout=60.0,
+        )
+        return resp.status_code == 200
+    except Exception as e:
+        logger.warning(f"Could not unload model '{model}': {e}")
+        return False
+
+
+def _unload_all_ollama_models(base_url: str = OLLAMA_BASE_URL) -> int:
+    """
+    Unloads ALL currently loaded Ollama models from VRAM.
+    
+    Uses /api/ps to get list of loaded models, then unloads each one.
+    Returns the number of models unloaded.
+    """
+    import time
+    
+    try:
+        # Get list of currently loaded models
+        resp = httpx.get(f"{base_url}/api/ps", timeout=10.0)
+        if resp.status_code != 200:
+            logger.warning(f"Could not get loaded models: {resp.status_code}")
+            return 0
+        
+        data = resp.json()
+        models = data.get("models", [])
+        
+        if not models:
+            logger.info("No models currently loaded in VRAM")
+            return 0
+        
+        unloaded = 0
+        for model_info in models:
+            model_name = model_info.get("name", model_info.get("model"))
+            if model_name:
+                logger.info(f"Unloading model '{model_name}' from VRAM...")
+                if _unload_ollama_model(model_name, base_url):
+                    unloaded += 1
+        
+        if unloaded > 0:
+            logger.info(f"Unloaded {unloaded} models. Waiting for VRAM to free...")
+            time.sleep(60)
+        
+        return unloaded
+        
+    except Exception as e:
+        logger.warning(f"Could not unload models: {e}")
+        return 0
+
+
+def _get_model_from_config(cfg: RunConfig) -> str:
+    """Extract the QA model name from config."""
+    # Check factors.llm.qa.model first
+    llm_cfg = cfg.factors.get("llm", {})
+    qa_cfg = llm_cfg.get("qa", {})
+    if qa_cfg.get("model"):
+        return qa_cfg["model"]
+    # Fallback to qa_payload.model
+    return cfg.qa_payload.get("model", "qwen3:8b")
 
 
 @app.command()
@@ -157,13 +229,13 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
     os_index, qdrant_collection = cfg.get_index_names()
 
     payload = {
+        **cfg.qa_payload,
         "query": qr["text"],
         "process_name": qr["process_name"],
         "process_id": qr["process_id"],
         "roles": qr["roles"] or [],
         "current_node_id": qr["current_node_id"],
         "definition_id": qr["definition_id"],
-        **cfg.qa_payload,
     }
 
     # Reranking
@@ -200,9 +272,10 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
 
     # Run-Item speichern
     upsert_run_item(
+        pool=get_pool(),
         run_id=run_id,
         query_pk=qr["id"],
-        answer=answer,
+        answer_text=answer,
         citations=context,
         latency_ms=latency,
         meta=meta,
@@ -228,7 +301,7 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
 
 
 async def _run_all(
-    rows: list[QueryRow], cfg: RunConfig, run_id: int, max_concurrency: int = 8
+    rows: list[QueryRow], cfg: RunConfig, run_id: int, max_concurrency: int = 1
 ) -> None:
     client = QAClient(cfg.qa_base_url)
     sem = asyncio.Semaphore(max_concurrency)
@@ -303,7 +376,7 @@ def score(
 
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "select id, config_json from ragrun.eval_runs where run_name=%s",
+            "select id, config_json from ragrun.eval_runs where name=%s",
             (run_name,),
         )
         row = cur.fetchone()
@@ -412,7 +485,7 @@ def score(
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select ri.query_pk, ri.answer, ri.citations, q.id, q.query_id, q.text
+            select ri.query_pk, ri.answer_text, ri.citations, q.id, q.query_id, q.text
             from ragrun.eval_run_items ri
             join ragrun.queries q on ri.query_pk = q.id
             where ri.run_id = %s
@@ -469,7 +542,7 @@ def score(
         # RETRIEVAL-METRIKEN (recall, ndcg, mrr)
         # ============================================================
         ranked: list[str] = []
-        sources = tuple(cfg.ranking_sources or [])
+        sources = list(cfg.ranking_sources or [])
         if sources:
             with pool.connection() as conn, conn.cursor() as cur:
                 cur.execute(
@@ -699,6 +772,9 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
 
     variants = raw.get("variants", [])
     variant_names: List[str] = []  # Sammle alle Variant-Namen
+    
+    # Track current model for unloading between runs
+    current_model = _get_model_from_config(baseline_cfg)
 
     for var in variants:
         name = var.get("name", "UNNAMED")
@@ -723,6 +799,14 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
 
         typer.echo(f"\n=== Variant: {cfg.run_name} ===")
         if execute:
+            # Check if model changed - unload ALL models to free VRAM
+            new_model = _get_model_from_config(cfg)
+            if new_model != current_model:
+                typer.echo(f"Model changed: {current_model} → {new_model}")
+                typer.echo("Unloading all models from VRAM...")
+                _unload_all_ollama_models()
+                current_model = new_model
+            
             run(str(temp_cfg_path))
             score(cfg.run_name)
             variant_names.append(cfg.run_name)
@@ -762,9 +846,9 @@ def compare(run_a: str, run_b: str, metric: str = "recall@5", iters: int = 2000)
             cur.execute(
                 """
                 select s.query_pk, s.value
-                from ragrun.eval_scores s
+                from ragrun.scores s
                 join ragrun.eval_runs r on s.run_id = r.id
-                where r.run_name = %s and s.metric = %s
+                where r.name = %s and s.metric = %s
                 """,
                 (run_name, metric),
             )

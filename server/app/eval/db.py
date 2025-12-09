@@ -1,12 +1,14 @@
 from __future__ import annotations
+import json
 import os, pathlib
 from typing import Optional, Iterable, Dict, List, Any
 from psycopg_pool import ConnectionPool
-from psycopg2.extras import Json
+from psycopg.types.json import Json
 
-DEFAULT_DSN = os.getenv(
-    "EVAL_DB_DSN", "postgresql://postgres:postgres@localhost:5432/postgres"
-)
+from app.core.config import settings
+
+
+DEFAULT_DSN = settings.DATABASE_URL
 _pool: Optional[ConnectionPool] = None
 
 
@@ -37,7 +39,7 @@ def upsert_run(name: str, config_json: dict, dsn: Optional[str] = None) -> int:
             on conflict (name) do update set config_json = excluded.config_json
             returning id
             """,
-            (name, config_json),
+            (name, json.dumps(config_json)),
         )
         rid = cur.fetchone()[0]
         conn.commit()
@@ -117,7 +119,7 @@ def insert_qrels(
 def upsert_run_item(
     pool: ConnectionPool,
     run_id: int,
-    query_id: str,
+    query_pk: int,
     answer_text: Optional[str],
     citations: Optional[list[Any]],
     latency_ms: Optional[float],
@@ -146,11 +148,12 @@ def upsert_run_item(
                 token_out,
                 confidence,
                 whitelist_violation,
-                decision
+                decision,
+                meta
             )
             values (
                 %(run_id)s,
-                %(query_id)s,
+                %(query_pk)s,
                 %(status)s,
                 %(request_json)s,
                 %(response_json)s,
@@ -161,7 +164,8 @@ def upsert_run_item(
                 %(token_out)s,
                 %(confidence)s,
                 %(whitelist_violation)s,
-                %(decision)s
+                %(decision)s,
+                %(meta)s
             )
             on conflict (run_id, query_pk) do update set
                 status             = excluded.status,
@@ -174,11 +178,12 @@ def upsert_run_item(
                 token_out          = excluded.token_out,
                 confidence         = excluded.confidence,
                 whitelist_violation= excluded.whitelist_violation,
-                decision           = excluded.decision
+                decision           = excluded.decision,
+                meta               = excluded.meta
             """,
             {
                 "run_id": run_id,
-                "query_id": query_id,
+                "query_pk": query_pk,
                 "status": status,
                 "request_json": (
                     Json(meta.get("request"))
@@ -198,6 +203,7 @@ def upsert_run_item(
                 "confidence": meta.get("confidence"),
                 "whitelist_violation": meta.get("whitelist_violation"),
                 "decision": meta.get("decision"),
+                "meta": Json(meta),
             },
         )
         conn.commit()
@@ -292,7 +298,7 @@ def upsert_gold_answers(
             values (%s, %s, %s)
             on conflict (query_pk) do update set answers=excluded.answers, explanation=excluded.explanation
             """,
-            (query_pk, answers, explanation),
+            (query_pk, json.dumps(answers), explanation),
         )
         conn.commit()
 
@@ -377,11 +383,24 @@ def upsert_retrieval_log(
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            insert into ragrun.retrieval_logs (run_id, query_pk, chunk_id, rank, score, source)
-            values (%s, %s, %s, %s, %s, %s)
-            on conflict (run_id, query_pk, chunk_id) do update
-            set rank = excluded.rank, score = excluded.score, source = excluded.source
+            insert into ragrun.retrieval_logs
+              (run_id, query_pk, chunk_id, rank, score, source, document_id, meta)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            on conflict (run_id, query_pk, rank, source) do update set
+              chunk_id = excluded.chunk_id,
+              document_id = coalesce(excluded.document_id, ragrun.retrieval_logs.document_id),
+              score = excluded.score,
+              meta = excluded.meta
             """,
-            (run_id, query_pk, chunk_id, rank, score, source),
+            (
+                run_id,
+                query_pk,
+                chunk_id,
+                rank,
+                score,
+                source,
+                None,
+                None,
+            ),
         )
         conn.commit()

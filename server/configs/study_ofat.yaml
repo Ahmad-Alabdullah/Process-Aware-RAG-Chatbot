@@ -7,6 +7,95 @@ description: |
   Ergebnisse zeigen, welche Faktoren den größten Einfluss haben.
 
 variants:
+  # # === LLM MODEL ===
+  # - name: "OFAT_ministral-3:14b-instruct-2512-q4_K_M"
+  #   override: 
+  #     qa_payload: 
+  #       model: "ministral-3:14b-instruct-2512-q4_K_M"
+  #     factors:
+  #       llm:
+  #         qa:
+  #           model: "ministral-3:14b-instruct-2512-q4_K_M"
+  #           num_ctx: 4096
+  #   description: "Alternative: Mistral 3 14B Instruct quantitized"
+  
+ # === LLM TEMPERATURE ===
+  - name: "OFAT_temp_0.0"
+    override: 
+      factors:
+        llm:
+          qa:
+            temperature: 0.0
+    description: "Deterministisch (T=0.0)"
+
+  # by_title Chunks + Qwen3 Embedding
+  - name: "OFAT_embed_qwen3_bytitle"
+    override: 
+      factors:
+        embeddings:
+          backend: "ollama"
+          model: "qwen3-embedding:4b"
+          index_suffix: "qwen3"
+        chunking:
+          strategy: "by_title"
+          max_characters: 1800
+    description: "Qwen3 Embedding auf by_title Chunks"
+
+  # === EMBEDDING + CHUNKING KOMBINATIONEN ===
+  # Semantic Chunks + MiniLM Embedding
+  - name: "OFAT_chunk_semantic_minilm"
+    override:
+      factors:
+        embeddings:
+          backend: "hf"
+          model: "sentence-transformers/all-minilm-l6-v2"
+          index_suffix: "semantic"
+        chunking:
+          strategy: "semantic"
+    description: "Semantic Chunking mit MiniLM"
+
+  # Semantic Chunks + Qwen3 Embedding
+  - name: "OFAT_chunk_semantic_qwen3"
+    override:
+      factors:
+        embeddings:
+          backend: "ollama"
+          model: "qwen3-embedding:4b"
+          index_suffix: "semantic_qwen3"
+        chunking:
+          strategy: "semantic"
+    description: "Semantic Chunking mit Qwen3"
+
+  # === PROMPT STYLE ===
+  - name: "OFAT_prompt_structured"
+    override: 
+      qa_payload: 
+        prompt_style: "structured"
+      factors:
+        prompt:
+          style: "structured"
+    description: "Strukturierte Antworten"
+
+  - name: "OFAT_temp_0.3"
+    override: 
+      factors:
+        llm:
+          qa:
+            temperature: 0.3
+    description: "Etwas kreativer (T=0.3)"
+
+  # === LLM MODEL ===
+  - name: "OFAT_qwen3:8b-q4_K_M"
+    override: 
+      qa_payload: 
+        model: "qwen3:8b-q4_K_M"
+      factors:
+        llm:
+          qa:
+            model: "qwen3:8b-q4_K_M"
+            num_ctx: 4096
+    description: "Alternative: Qwen 3 8B quantitized"
+
   # === LLM MODEL ===
   - name: "OFAT_llm_llama3.1:8b"
     override: 
@@ -19,6 +108,18 @@ variants:
             num_ctx: 4096
     description: "Alternative: Llama 3.1 8B"
 
+  # === LLM MODEL ===
+  - name: "OFAT_llm_llama3.1:8b-instruct-q4_K_M"
+    override: 
+      qa_payload: 
+        model: "llama3.1:8b-instruct-q4_K_M"
+      factors:
+        llm:
+          qa:
+            model: "llama3.1:8b-instruct-q4_K_M"
+            num_ctx: 4096
+    description: "Alternative: Llama 3.1 8B Instruct quantitized"
+
   # === TOP-K ===
   - name: "OFAT_k3"
     override: 
@@ -26,28 +127,11 @@ variants:
         top_k: 3
     description: "Weniger Kontext: Top-3"
 
-  - name: "OFAT_k8"
-    override: 
-      qa_payload: 
-        top_k: 8
-    description: "Mehr Kontext: Top-8"
-
   - name: "OFAT_k10"
     override: 
       qa_payload: 
         top_k: 10
     description: "Viel Kontext: Top-10"
-
-  - name: "OFAT_ministral-3:8b"
-    override: 
-      qa_payload: 
-        model: "ministral-3:8b"
-      factors:
-        llm:
-          qa:
-            model: "ministral-3:8b"
-            num_ctx: 4096
-    description: "Alternative: Mistral 3 8B"
 
   # === RERANKING ===
   - name: "OFAT_rerank_on"
@@ -80,71 +164,6 @@ variants:
         prompt:
           style: "cot"
     description: "Chain-of-Thought Prompting"
-
-  - name: "OFAT_prompt_structured"
-    override: 
-      qa_payload: 
-        prompt_style: "structured"
-      factors:
-        prompt:
-          style: "structured"
-    description: "Strukturierte Antworten"
-
-  # === LLM TEMPERATURE ===
-  - name: "OFAT_temp_0.0"
-    override: 
-      factors:
-        llm:
-          qa:
-            temperature: 0.0
-    description: "Deterministisch (T=0.0)"
-
-  - name: "OFAT_temp_0.3"
-    override: 
-      factors:
-        llm:
-          qa:
-            temperature: 0.3
-    description: "Etwas kreativer (T=0.3)"
-
-  # === EMBEDDING + CHUNKING KOMBINATIONEN ===
-  
-  # by_title Chunks + Qwen3 Embedding
-  - name: "OFAT_embed_qwen3_bytitle"
-    override: 
-      factors:
-        embeddings:
-          backend: "ollama"
-          model: "qwen3-embedding:4b"
-          index_suffix: "qwen3"
-        chunking:
-          strategy: "by_title"
-          max_characters: 1800
-    description: "Qwen3 Embedding auf by_title Chunks"
-  
-  # Semantic Chunks + MiniLM Embedding
-  - name: "OFAT_chunk_semantic_minilm"
-    override:
-      factors:
-        embeddings:
-          backend: "hf"
-          model: "sentence-transformers/all-minilm-l6-v2"
-          index_suffix: "semantic"
-        chunking:
-          strategy: "semantic"
-    description: "Semantic Chunking mit MiniLM"
-
-  # Semantic Chunks + Qwen3 Embedding
-  - name: "OFAT_chunk_semantic_qwen3"
-    override:
-      factors:
-        embeddings:
-          backend: "ollama"
-          model: "qwen3-embedding:4b"
-          index_suffix: "semantic_qwen3"
-        chunking:
-          strategy: "semantic"
-    description: "Semantic Chunking mit Qwen3"
 
 # Metriken für Vergleich
 metrics:

@@ -33,10 +33,14 @@ def _get_reranker():
                     model_name, trust_remote_code=True
                 ),
                 "model": AutoModelForSequenceClassification.from_pretrained(
-                    model_name, trust_remote_code=True, torch_dtype=torch.float16
+                    model_name, trust_remote_code=True, dtype=torch.float16
                 ).to(device),
                 "device": device,
             }
+            # Fix: Qwen3-basierte Modelle haben kein pad_token
+            if _reranker_model["tokenizer"].pad_token is None:
+                _reranker_model["tokenizer"].pad_token = _reranker_model["tokenizer"].eos_token
+                logger.info(f"pad_token gesetzt auf: {_reranker_model['tokenizer'].pad_token}")
             logger.info(f"Jina Reranker v3 geladen (device={device})")
         except Exception as e:
             logger.error(f"Jina Reranker v3 konnte nicht geladen werden: {e}")
@@ -87,30 +91,30 @@ def rerank(
         texts = [doc.get(text_key, "") for doc in documents]
         pairs = [[query, text] for text in texts]
 
-        # Tokenisieren
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+        scores = []
         with torch.no_grad():
-            inputs = tokenizer(
-                pairs,
-                padding=True,
-                truncation=True,
-                max_length=8192,
-                return_tensors="pt",
-            ).to(device)
+            for pair in pairs:
+                inputs = tokenizer(
+                    [pair],
+                    padding=False,
+                    truncation=True,
+                    max_length=8192,
+                    return_tensors="pt",
+                ).to(device)
+                
+                outputs = model(**inputs)
+                logits = outputs.logits.squeeze()
+                score = logits[0].item() if logits.dim() > 0 else logits.item()
+                scores.append(score)
 
-            # Scores berechnen
-            outputs = model(**inputs)
-            scores = outputs.logits.squeeze(-1).cpu().tolist()
-
-            # Falls nur ein Dokument, ist scores ein float
-            if isinstance(scores, float):
-                scores = [scores]
-
-        # Scores zu Dokumenten hinzufügen
         scored_docs = []
         for doc, score in zip(documents, scores):
             doc_copy = doc.copy()
             doc_copy["rerank_score"] = float(score)
-            doc_copy["source"] = "ce"  # Cross-Encoder
+            doc_copy["source"] = "ce"
             scored_docs.append(doc_copy)
 
         # Nach Score sortieren (höher = besser)

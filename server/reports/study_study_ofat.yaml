@@ -1,0 +1,25 @@
+baseline: BASELINE
+rankings:
+  factual_consistency_normalized:
+  - name: BASELINE
+    value: 0.5147058823529411
+  - name: OFAT_prompt_structured
+    value: 0.5
+  ndcg@5:
+  - name: BASELINE
+    value: 0.6663818766527378
+  - name: OFAT_prompt_structured
+    value: 0.6663818766527378
+  recall@5:
+  - name: BASELINE
+    value: 0.6597222222222222
+  - name: OFAT_prompt_structured
+    value: 0.6597222222222222
+  semantic_sim:
+  - name: OFAT_prompt_structured
+    value: 0.8557739169633284
+  - name: BASELINE
+    value: 0.8448970915625896
+study_name: study_ofat
+variants:
+- OFAT_prompt_structured

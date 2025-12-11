@@ -426,8 +426,158 @@ def h2_judge_by_query_type(
 
 
 # ============================================================
-# FACTUAL CONSISTENCY (LLM-Judge mit selene-mini)
+# RAG TRIAD METRICS (RAGAS-Style, Reference-Free)
 # ============================================================
+
+
+def judge_answer_relevance(
+    query: str,
+    response: str,
+    model: str = DEFAULT_JUDGE_MODEL,
+) -> Dict[str, Any]:
+    """
+    Bewertet: Beantwortet die Antwort die Frage? (Answer Relevance)
+    Strategie: Bewertet direkt, ob die Antwort eine sinnvolle Reaktion auf die Frage ist.
+    """
+    prompt = f"""Du bist ein Evaluator für QA-Systeme.
+
+### Aufgabe
+Bewerte die Relevanz der Antwort auf die gegebene Frage.
+Ignoriere, ob die Antwort faktisch wahr ist (das prüft ein anderer Schritt).
+Prüfe nur: Adressiert diese Antwort direkt das Anliegen der Frage?
+
+### Frage
+{query}
+
+### Antwort
+{response}
+
+### Bewertungskriterien
+1. Adressiert die Antwort den Kern der Frage?
+2. Ist die Antwort spezifisch oder nur eine allgemeine Floskel?
+3. "Ich weiß nicht" ist relevant, wenn keine Infos vorhanden sind.
+
+### Bewertungsskala (1-5)
+5 = Perfekt: Präzise, direkte Antwort auf die Frage
+4 = Gut: Beantwortet die Frage, vielleicht etwas weitschweifig
+3 = Akzeptabel: Thema getroffen, aber vage oder indirekt
+2 = Schwach: Thema nur gestreift, Frage nicht wirklich beantwortet
+1 = Irrelevant: Antwort hat nichts mit der Frage zu tun
+
+### Antwortformat (JSON)
+{{
+    "score": <1-5>,
+    "reasoning": "Kurze Begründung"
+}}"""
+
+    raw = _ollama_generate_judge(prompt, model=model)
+    parsed = _parse_judge_response(raw)
+    score = min(5, max(1, parsed.get("score", 3)))
+    
+    return {
+        "answer_relevance_score": score,
+        "answer_relevance_normalized": (score - 1) / 4.0,
+        "reasoning": parsed.get("reasoning", "")
+    }
+
+
+def judge_context_relevance(
+    query: str,
+    chunks: List[str],
+    model: str = DEFAULT_JUDGE_MODEL,
+) -> Dict[str, Any]:
+    """
+    Bewertet: Sind die abgerufenen Chunks hilfreich? (Context Relevance)
+    """
+    context_text = "\n---\n".join(chunks[:5]) if chunks else "(Kein Kontext)"
+    
+    prompt = f"""Du bist ein Evaluator für Retrieval-Systeme.
+
+### Aufgabe
+Bewerte, ob die abgerufenen Text-Chunks nützliche Informationen enthalten, 
+um die Frage zu beantworten. Ignoriere, ob die Antwort korrekt ist.
+
+### Frage
+{query}
+
+### Abgerufene Chunks (Kontext)
+{context_text}
+
+### Bewertungsskala (1-5)
+5 = Perfekt: Chunks enthalten die exakte Antwort und wichtige Details
+4 = Gut: Chunks enthalten die Antwort, aber auch Rauschen
+3 = Akzeptabel: Chunks sind thematisch relevant, Antwort ableitbar
+2 = Schwach: Nur lose verwandte Keywords, Antwort kaum möglich
+1 = Nutzlos: Chunks haben nichts mit der Frage zu tun
+
+### Antwortformat (JSON)
+{{
+    "score": <1-5>,
+    "reasoning": "Kurze Begründung"
+}}"""
+
+    raw = _ollama_generate_judge(prompt, model=model)
+    parsed = _parse_judge_response(raw)
+    score = min(5, max(1, parsed.get("score", 3)))
+
+    return {
+        "context_relevance_score": score,
+        "context_relevance_normalized": (score - 1) / 4.0,
+        "reasoning": parsed.get("reasoning", "")
+    }
+
+
+def judge_faithfulness(
+    response: str,
+    chunks: List[str],
+    model: str = DEFAULT_JUDGE_MODEL,
+) -> Dict[str, Any]:
+    """
+    Bewertet: Stammt die Antwort NUR aus dem Kontext? (Faithfulness/Groundedness)
+    Prüft auf Halluzinationen.
+    """
+    context_text = "\n---\n".join(chunks[:5]) if chunks else "(Kein Kontext)"
+    
+    prompt = f"""Du bist ein Evaluator für Halluzinationen.
+
+### Aufgabe
+Prüfe, ob JEDE Aussage in der Antwort durch den gegebenen Kontext belegt ist.
+Nutze KEIN eigenes Wissen. Wenn eine Aussage nicht im Kontext steht, ist es eine Halluzination.
+
+### Kontext
+{context_text}
+
+### Antwort
+{response}
+
+### Bewertungsskala (1-5)
+5 = Perfekt: Jeder Satz ist eindeutig durch den Kontext belegt
+4 = Gut: Fast alles belegt, minimale, triviale Ergänzungen
+3 = Akzeptabel: Hauptaussagen belegt, aber einige Details nicht im Kontext
+2 = Bedenklich: Enthält wesentliche Infos, die nicht im Kontext stehen
+1 = Halluzination: Antwort hat wenig bis nichts mit dem Kontext zu tun
+
+### Antwortformat (JSON)
+{{
+    "score": <1-5>,
+    "hallucinated_statements": ["Aussage 1", "Aussage 2"],
+    "reasoning": "Begründung"
+}}"""
+
+    raw = _ollama_generate_judge(prompt, model=model)
+    parsed = _parse_judge_response(raw)
+    score = min(5, max(1, parsed.get("score", 3)))
+
+    return {
+        "faithfulness_score": score,
+        "faithfulness_normalized": (score - 1) / 4.0,
+        "hallucinated_statements": parsed.get("hallucinated_statements", []),
+        "reasoning": parsed.get("reasoning", "")
+    }
+
+
+# ============================================================
+# FACTUAL CONSISTENCY (Reference-Based)
 
 
 def judge_factual_consistency(

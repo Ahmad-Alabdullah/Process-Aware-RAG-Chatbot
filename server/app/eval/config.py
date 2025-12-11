@@ -72,8 +72,10 @@ class RunConfig(BaseModel):
     qa_payload: Dict[str, Any] = Field(default_factory=dict)
     factors: Dict[str, Any] = Field(default_factory=dict)
     logging: Dict[str, Any] = Field(default_factory=dict)
+
     ranking_sources: List[str] = Field(default_factory=lambda: ["ce", "rrf"])
     ranking_fallback_all: bool = Field(default=True)
+    metrics: Optional[Dict[str, List[str]]] = Field(default=None)
 
     def get_embedding_config(self) -> EmbeddingConfig:
         """Extrahiert Embedding-Konfiguration aus factors."""

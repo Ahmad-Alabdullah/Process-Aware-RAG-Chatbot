@@ -1,0 +1,16 @@
+name: study_gso_topk
+baseline: "configs/baseline_gso_qwen3_semantic.yaml"
+
+# Step 1 GSO: untersuchen, ob erhöhtes top_k in Kombination mit dem besseren embedding-Modell und 
+# den semantic chunks (Gewinner aus OFAT) die Ergebnisse verbessert
+ 
+variants:
+  - name: GSO_S1_k10
+    override:
+      qa_payload:
+        top_k: 10
+    
+  - name: GSO_S1_k15
+    override:
+      qa_payload:
+        top_k: 15

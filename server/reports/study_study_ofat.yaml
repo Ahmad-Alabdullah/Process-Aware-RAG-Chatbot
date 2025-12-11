@@ -1,25 +1,235 @@
 baseline: BASELINE
 rankings:
   factual_consistency_normalized:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.5555555555555556
+  - name: OFAT_k10
+    value: 0.546875
+  - name: OFAT_embed_qwen3_bytitle
+    value: 0.5294117647058824
+  - name: OFAT_qwen3:8b-q4_K_M
+    value: 0.5277777777777778
   - name: BASELINE
-    value: 0.5147058823529411
+    value: 0.515625
+  - name: OFAT_llm_llama3.1:8b
+    value: 0.5138888888888888
+  - name: OFAT_llm_llama3.1:8b-instruct-q4_K_M
+    value: 0.5138888888888888
+  - name: OFAT_prompt_cot
+    value: 0.5138888888888888
+  - name: OFAT_temp_0.0
+    value: 0.5
+  - name: OFAT_chunk_semantic_minilm
+    value: 0.5
   - name: OFAT_prompt_structured
     value: 0.5
+  - name: OFAT_temp_0.3
+    value: 0.5
+  - name: OFAT_k3
+    value: 0.5
+  - name: OFAT_rerank_on
+    value: 0.5
+  - name: OFAT_prompt_fewshot
+    value: 0.5
+  llm_answer_relevance:
+  - name: OFAT_llm_llama3.1:8b
+    value: 0.6527777777777778
+  - name: OFAT_chunk_semantic_minilm
+    value: 0.6388888888888888
+  - name: OFAT_temp_0.3
+    value: 0.6388888888888888
+  - name: BASELINE
+    value: 0.625
+  - name: OFAT_k10
+    value: 0.625
+  - name: OFAT_embed_qwen3_bytitle
+    value: 0.6176470588235294
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.6111111111111112
+  - name: OFAT_qwen3:8b-q4_K_M
+    value: 0.6111111111111112
+  - name: OFAT_prompt_fewshot
+    value: 0.6111111111111112
+  - name: OFAT_prompt_cot
+    value: 0.5972222222222222
+  - name: OFAT_temp_0.0
+    value: 0.5882352941176471
+  - name: OFAT_k3
+    value: 0.5555555555555556
+  - name: OFAT_rerank_on
+    value: 0.5441176470588235
+  - name: OFAT_prompt_structured
+    value: 0.5294117647058824
+  - name: OFAT_llm_llama3.1:8b-instruct-q4_K_M
+    value: 0.5138888888888888
+  llm_context_relevance:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.5833333333333334
+  - name: BASELINE
+    value: 0.5625
+  - name: OFAT_embed_qwen3_bytitle
+    value: 0.5588235294117647
+  - name: OFAT_temp_0.3
+    value: 0.5555555555555556
+  - name: OFAT_qwen3:8b-q4_K_M
+    value: 0.5555555555555556
+  - name: OFAT_llm_llama3.1:8b
+    value: 0.5555555555555556
+  - name: OFAT_llm_llama3.1:8b-instruct-q4_K_M
+    value: 0.5555555555555556
+  - name: OFAT_k3
+    value: 0.5555555555555556
+  - name: OFAT_prompt_fewshot
+    value: 0.5555555555555556
+  - name: OFAT_prompt_cot
+    value: 0.5555555555555556
+  - name: OFAT_k10
+    value: 0.546875
+  - name: OFAT_temp_0.0
+    value: 0.5441176470588235
+  - name: OFAT_prompt_structured
+    value: 0.5441176470588235
+  - name: OFAT_chunk_semantic_minilm
+    value: 0.5138888888888888
+  - name: OFAT_rerank_on
+    value: 0.45588235294117646
+  llm_faithfulness:
+  - name: OFAT_prompt_cot
+    value: 0.6527777777777778
+  - name: OFAT_embed_qwen3_bytitle
+    value: 0.6470588235294118
+  - name: OFAT_prompt_structured
+    value: 0.6470588235294118
+  - name: BASELINE
+    value: 0.625
+  - name: OFAT_k10
+    value: 0.625
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.6111111111111112
+  - name: OFAT_prompt_fewshot
+    value: 0.6111111111111112
+  - name: OFAT_k3
+    value: 0.5972222222222222
+  - name: OFAT_rerank_on
+    value: 0.5735294117647058
+  - name: OFAT_llm_llama3.1:8b-instruct-q4_K_M
+    value: 0.5694444444444444
+  - name: OFAT_temp_0.0
+    value: 0.5588235294117647
+  - name: OFAT_chunk_semantic_minilm
+    value: 0.5555555555555556
+  - name: OFAT_temp_0.3
+    value: 0.5555555555555556
+  - name: OFAT_llm_llama3.1:8b
+    value: 0.5555555555555556
+  - name: OFAT_qwen3:8b-q4_K_M
+    value: 0.5416666666666666
   ndcg@5:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.7700348718263573
+  - name: OFAT_embed_qwen3_bytitle
+    value: 0.7339615046370046
   - name: BASELINE
+    value: 0.6663818766527378
+  - name: OFAT_temp_0.0
     value: 0.6663818766527378
   - name: OFAT_prompt_structured
     value: 0.6663818766527378
+  - name: OFAT_temp_0.3
+    value: 0.6663818766527378
+  - name: OFAT_qwen3:8b-q4_K_M
+    value: 0.6663818766527378
+  - name: OFAT_llm_llama3.1:8b
+    value: 0.6663818766527378
+  - name: OFAT_llm_llama3.1:8b-instruct-q4_K_M
+    value: 0.6663818766527378
+  - name: OFAT_prompt_fewshot
+    value: 0.6663818766527378
+  - name: OFAT_prompt_cot
+    value: 0.6663818766527378
+  - name: OFAT_k10
+    value: 0.6607939188720758
+  - name: OFAT_k3
+    value: 0.5874881207241421
+  - name: OFAT_chunk_semantic_minilm
+    value: 0.43681947732031334
+  - name: OFAT_rerank_on
+    value: 0.1228502237991243
   recall@5:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.7612433862433863
+  - name: OFAT_embed_qwen3_bytitle
+    value: 0.7217592592592592
   - name: BASELINE
+    value: 0.6597222222222222
+  - name: OFAT_temp_0.0
     value: 0.6597222222222222
   - name: OFAT_prompt_structured
     value: 0.6597222222222222
+  - name: OFAT_temp_0.3
+    value: 0.6597222222222222
+  - name: OFAT_qwen3:8b-q4_K_M
+    value: 0.6597222222222222
+  - name: OFAT_llm_llama3.1:8b
+    value: 0.6597222222222222
+  - name: OFAT_llm_llama3.1:8b-instruct-q4_K_M
+    value: 0.6597222222222222
+  - name: OFAT_prompt_fewshot
+    value: 0.6597222222222222
+  - name: OFAT_prompt_cot
+    value: 0.6597222222222222
+  - name: OFAT_k10
+    value: 0.6541666666666667
+  - name: OFAT_chunk_semantic_minilm
+    value: 0.6097883597883598
+  - name: OFAT_k3
+    value: 0.5347222222222222
+  - name: OFAT_rerank_on
+    value: 0.1814814814814815
   semantic_sim:
   - name: OFAT_prompt_structured
-    value: 0.8557739169633284
+    value: 0.8521698712698568
+  - name: OFAT_llm_llama3.1:8b-instruct-q4_K_M
+    value: 0.8471726599789403
+  - name: OFAT_prompt_fewshot
+    value: 0.8456092153735064
+  - name: OFAT_temp_0.0
+    value: 0.8420300010348446
+  - name: OFAT_k10
+    value: 0.839263078147819
+  - name: OFAT_embed_qwen3_bytitle
+    value: 0.8379683431096473
+  - name: OFAT_prompt_cot
+    value: 0.8365684647611832
+  - name: OFAT_temp_0.3
+    value: 0.8355916728204942
+  - name: OFAT_llm_llama3.1:8b
+    value: 0.8323900246069538
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.8306389874827447
+  - name: OFAT_k3
+    value: 0.8304565018745304
   - name: BASELINE
-    value: 0.8448970915625896
+    value: 0.830166957562287
+  - name: OFAT_qwen3:8b-q4_K_M
+    value: 0.8276063914270755
+  - name: OFAT_chunk_semantic_minilm
+    value: 0.8182144631228483
+  - name: OFAT_rerank_on
+    value: 0.7975745923913289
 study_name: study_ofat
 variants:
+- OFAT_temp_0.0
+- OFAT_embed_qwen3_bytitle
+- OFAT_chunk_semantic_minilm
+- OFAT_chunk_semantic_qwen3
 - OFAT_prompt_structured
+- OFAT_temp_0.3
+- OFAT_qwen3:8b-q4_K_M
+- OFAT_llm_llama3.1:8b
+- OFAT_llm_llama3.1:8b-instruct-q4_K_M
+- OFAT_k3
+- OFAT_k10
+- OFAT_rerank_on
+- OFAT_prompt_fewshot
+- OFAT_prompt_cot

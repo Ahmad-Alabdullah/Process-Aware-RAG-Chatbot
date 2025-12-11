@@ -39,3 +39,29 @@ curl -s http://localhost:PORT/collections
 ### Check chunks
 
 curl -s http://localhost:PORT/collections/chunks
+
+## Useful commands for evaluation runner
+
+# 1. DB initialisieren
+python -m app.eval.runner initdb
+
+# 2. Pre-Flight Check
+python -m app.eval.scripts.check
+
+# 3. Dataset laden
+python -m app.eval.runner load-dataset demo datasets/demo_queries.jsonl datasets/demo_qrels_1800.jsonl
+
+# 4. Answers laden
+python -m app.eval.runner load-answers demo datasets/demo_answers.jsonl
+
+# 5. Baseline ausführen
+python -m app.eval.runner run configs/baseline.yaml
+
+# 5.1. OFAT ausführen
+python -m app.eval.runner study configs/study_ofat.yaml
+
+# 5.2. GSO ausführen
+python -m app.eval.runner study configs/study_gso.yaml 
+
+# 6. Scores berechnen
+python -m app.eval.runner score BASELINE

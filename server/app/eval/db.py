@@ -98,20 +98,22 @@ def insert_qrels(
     query_pk: int,
     qrels: Iterable[tuple[str, int]],
     document_ids: Optional[Dict[str, str]] = None,
+    qrels_version: str = "1800",
 ) -> None:
+    """Insert qrels for a specific chunking version."""
     pool = get_pool()
     with pool.connection() as conn, conn.cursor() as cur:
         for chunk_id, rel in qrels:
             doc_id = (document_ids or {}).get(chunk_id)
             cur.execute(
                 """
-                insert into ragrun.gold_evidence (query_pk, chunk_id, document_id, relevance)
-                values (%s, %s, %s, %s)
-                on conflict (query_pk, chunk_id) do update set
+                insert into ragrun.gold_evidence (query_pk, chunk_id, document_id, relevance, qrels_version)
+                values (%s, %s, %s, %s, %s)
+                on conflict (query_pk, chunk_id, qrels_version) do update set
                   relevance=excluded.relevance,
                   document_id=coalesce(excluded.document_id, ragrun.gold_evidence.document_id)
                 """,
-                (query_pk, chunk_id, doc_id, rel),
+                (query_pk, chunk_id, doc_id, rel, qrels_version),
             )
         conn.commit()
 
@@ -255,7 +257,7 @@ def upsert_score(
             values (%s,%s,%s,%s,%s)
             on conflict (run_id, query_pk, metric) do update set value=excluded.value, details=excluded.details
             """,
-            (run_id, query_pk, metric, value, details),
+            (run_id, query_pk, metric, value, Json(details) if details is not None else None),
         )
         conn.commit()
 

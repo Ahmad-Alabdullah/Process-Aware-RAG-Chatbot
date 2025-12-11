@@ -1,7 +1,7 @@
-# Evaluation Report: OFAT_temp_0.0
+# Evaluation Report: BASELINE
 
-**Run ID:** 44
-**Erstellt:** 2025-12-10 14:15:56
+**Run ID:** 2
+**Erstellt:** 2025-12-11 12:30:04
 **Dataset:** demo
 
 ---
@@ -35,19 +35,22 @@ rrf_k: 60
 
 | Metrik | Mean | 95% CI | N |
 |--------|-----:|--------|--:|
-| **semantic_sim** | 0.8367 | [0.8146, 0.8588] | 18 |
-| rouge_l_recall | 0.2583 | [0.2189, 0.2976] | 18 |
-| content_f1 | 0.3104 | [0.2740, 0.3467] | 18 |
-| bertscore_f1 | 0.7341 | [0.7241, 0.7441] | 18 |
+| **semantic_sim** | 0.8302 | [0.8084, 0.8519] | 16 |
+| rouge_l_recall | 0.2653 | [0.2274, 0.3031] | 16 |
+| content_f1 | 0.3060 | [0.2743, 0.3377] | 16 |
+| bertscore_f1 | 0.7364 | [0.7278, 0.7449] | 16 |
 
-## Faithfulness-Metriken
+## Faithfulness & Relevance (RAGAS)
 
 | Metrik | Mean | 95% CI | N |
 |--------|-----:|--------|--:|
-| citation_recall | 0.6597 | [0.5195, 0.7999] | 18 |
-| citation_precision | 0.3889 | [0.2914, 0.4864] | 18 |
-| factual_consistency_score | 3.1111 | [2.8933, 3.3289] | 18 |
-| **factual_consistency_normalized** | 0.5278 | [0.4733, 0.5822] | 18 |
+| citation_recall | 0.6714 | [0.5197, 0.8230] | 16 |
+| citation_precision | 0.3750 | [0.2812, 0.4688] | 16 |
+| factual_consistency_score | 3.0625 | [2.9400, 3.1850] | 16 |
+| **factual_consistency_normalized** | 0.5156 | [0.4850, 0.5463] | 16 |
+| llm_answer_relevance | 0.6250 | [0.5154, 0.7346] | 16 |
+| llm_context_relevance | 0.5625 | [0.5077, 0.6173] | 16 |
+| llm_faithfulness | 0.6250 | [0.5250, 0.7250] | 16 |
 
 ## H2 Gating-Metriken
 
@@ -66,4 +69,4 @@ rrf_k: 60
 
 ---
 
-*Report generiert am 2025-12-10 15:25:30*
+*Report generiert am 2025-12-11 14:44:52*

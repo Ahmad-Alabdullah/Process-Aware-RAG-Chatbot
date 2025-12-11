@@ -43,6 +43,7 @@ variants:
 factors:
   evaluation:
     use_llm_judge: true
+    llm_metrics: ["consistency", "relevance", "faithfulness"]
     judge_model: "atla/selene-mini"
 
 metrics:
@@ -70,6 +71,12 @@ metrics:
   scores:
     - output_scope_score
     - output_hallucination_score
+  
+  # RAGAS-Style Metriken (Neu)
+  ragas:
+    - llm_answer_relevance
+    - llm_context_relevance
+    - llm_faithfulness
 
   # Input-Metriken (Manipulation Check)
   manipulation_check:

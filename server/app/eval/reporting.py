@@ -58,12 +58,15 @@ METRIC_GROUPS = {
         "higher_is_better": True,
     },
     "faithfulness": {
-        "name": "Faithfulness-Metriken",
+        "name": "Faithfulness & Relevance (RAGAS)",
         "metrics": [
             "citation_recall",
             "citation_precision",
             "factual_consistency_score",
             "factual_consistency_normalized",
+            "llm_answer_relevance",
+            "llm_context_relevance",
+            "llm_faithfulness",
         ],
         "primary": "factual_consistency_normalized",
         "higher_is_better": True,
@@ -411,6 +414,7 @@ def generate_study_report(
     baseline_run_name: str,
     variant_run_names: List[str],
     primary_metrics: List[str] = None,
+    secondary_metrics: List[str] = None,
     out_dir: Optional[str] = None,
     significance_iters: int = 2000,
 ) -> str:
@@ -427,6 +431,8 @@ def generate_study_report(
     """
     if primary_metrics is None:
         primary_metrics = ["recall@5", "factual_consistency_normalized", "semantic_sim"]
+    if secondary_metrics is None:
+        secondary_metrics = ["recall@3", "recall@10", "citation_recall"]
 
     pool = get_pool()
     out_path = Path(out_dir or "reports")
@@ -506,27 +512,30 @@ def generate_study_report(
         ]
     )
 
-    # Ranking nach primärer Metrik
-    primary = primary_metrics[0]
-    lines.extend(
-        [
-            f"## Ranking nach {primary}",
-            "",
-        ]
-    )
-
+    # Ranking nach ALLEN primären Metriken
     all_runs = [baseline_data] + variants_data
-    sorted_runs = sorted(
-        all_runs,
-        key=lambda x: x["aggregates"].get(primary, {}).get("mean", 0),
-        reverse=_get_higher_is_better(primary),
-    )
+    
+    for primary in primary_metrics:
+        lines.extend(
+            [
+                f"## Ranking nach {primary}",
+                "",
+            ]
+        )
 
-    for i, run in enumerate(sorted_runs, 1):
-        val = run["aggregates"].get(primary, {}).get("mean", 0)
-        is_baseline = run["run_name"] == baseline_run_name
-        marker = " (Baseline)" if is_baseline else ""
-        lines.append(f"{i}. **{run['run_name']}**{marker}: {val:.4f}")
+        sorted_runs = sorted(
+            all_runs,
+            key=lambda x: x["aggregates"].get(primary, {}).get("mean", 0),
+            reverse=_get_higher_is_better(primary),
+        )
+
+        for i, run in enumerate(sorted_runs, 1):
+            val = run["aggregates"].get(primary, {}).get("mean", 0)
+            is_baseline = run["run_name"] == baseline_run_name
+            marker = " (Baseline)" if is_baseline else ""
+            lines.append(f"{i}. **{run['run_name']}**{marker}: {val:.4f}")
+        
+        lines.append("")
 
     lines.extend(["", "---", ""])
 
@@ -548,7 +557,7 @@ def generate_study_report(
             ]
         )
 
-        for m in primary_metrics + ["recall@3", "recall@10", "citation_recall"]:
+        for m in primary_metrics + secondary_metrics:
             base_val = baseline_data["aggregates"].get(m, {}).get("mean", 0)
             var_val = var["aggregates"].get(m, {}).get("mean", 0)
             delta = var_val - base_val

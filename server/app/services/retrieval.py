@@ -221,10 +221,14 @@ def hybrid_search(
 
     # ---------- 5) Optionales Reranking ----------
     if use_rerank and results:
-        from app.services.reranking import rerank
+        from app.services.reranking import rerank, unload_reranker
 
         logger.info(f"Reranking {len(results)} candidates → top {k}")
         results = rerank(q, results, top_k=k, text_key="text")
+        logger.info(f"Reranking done: {results}")
+        
+        # GPU-Speicher freigeben für Ollama LLM
+        unload_reranker()
     else:
         # fusion onlyy
         results = results[:k]

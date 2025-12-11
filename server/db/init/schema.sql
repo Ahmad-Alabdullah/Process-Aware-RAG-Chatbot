@@ -30,7 +30,8 @@ create table if not exists ragrun.gold_evidence (
   chunk_id text not null,
   document_id text,
   relevance smallint not null default 1,
-  unique (query_pk, chunk_id)
+  qrels_version text not null default '1800',
+  unique (query_pk, chunk_id, qrels_version)
 );
 
 create table if not exists ragrun.gold_gating (
@@ -99,5 +100,3 @@ create table if not exists ragrun.aggregates (
   n int,
   primary key (run_id, metric)
 );
-
--- Removed: ragrun.run_items (unused, merged into eval_run_items)

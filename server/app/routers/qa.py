@@ -45,7 +45,7 @@ def ask(
     - CoT: 0.2 (moderates T für Reasoning)
     """
     logger.info(
-        "QA /ask: query=%s, process=%s, node=%s, rerank=%s, emb=%s/%s",
+        "QA /ask: query=%s, process=%s, node=%s, rerank=%s, emb=%s/%s, temp=%s",
         body.query[:50] if body.query else "",
         body.process_name,
         body.current_node_id,
@@ -98,6 +98,8 @@ def ask(
         body.use_rerank,
         body.rerank_top_n if body.use_rerank else body.top_k * 5,
     )
+
+    logger.info(f"ctx and das LLM: {ctx}")
 
     # logger.info("Retrieved %d chunks", len(ctx))
 

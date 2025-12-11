@@ -6,7 +6,12 @@ import httpx
 from pathlib import Path
 from app.core.clients import get_logger, setup_logging
 from app.eval.metrics.faithfulness import compute_faithfulness_metrics
-from app.eval.metrics.llm_judge import judge_factual_consistency
+from app.eval.metrics.llm_judge import (
+    judge_factual_consistency,
+    judge_answer_relevance,
+    judge_context_relevance,
+    judge_faithfulness,
+)
 
 from .config import RunConfig
 from .db import (
@@ -395,20 +400,24 @@ def score(
         qid_to_pk = {r[1]: r[0] for r in cur.fetchall()}
 
     # ================================================================
-    # GOLD-DATEN: Nur laden wenn --reload-gold ODER nicht in DB
+    # GOLD-DATEN: Version-aware Loading
     # ================================================================
     qrels_path = Path(cfg.get_qrels_path())
     answers_path = Path(cfg.get_answers_path())
+    
+    # Bestimme qrels_version aus Chunking-Strategie
+    qrels_version = cfg.get_chunking_config().get_qrels_suffix()
+    logger.info(f"Qrels-Version für diesen Run: {qrels_version}")
 
-    # Prüfen ob Gold-Daten bereits in DB existieren
+    # Prüfen ob Gold-Daten für DIESE VERSION bereits in DB existieren
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
             SELECT COUNT(*) FROM ragrun.gold_evidence ge
             JOIN ragrun.queries q ON ge.query_pk = q.id
-            WHERE q.dataset_name = %s
+            WHERE q.dataset_name = %s AND ge.qrels_version = %s
             """,
-            (cfg.dataset,),
+            (cfg.dataset, qrels_version),
         )
         qrels_exist = cur.fetchone()[0] > 0
 
@@ -424,13 +433,13 @@ def score(
 
     if reload_gold or not qrels_exist:
         if qrels_path.exists():
-            logger.info(f"Lade Qrels aus {qrels_path}...")
-            load_qrels(cfg.dataset, qid_to_pk, str(qrels_path))
+            logger.info(f"Lade Qrels aus {qrels_path} (Version: {qrels_version})...")
+            load_qrels(cfg.dataset, qid_to_pk, str(qrels_path), qrels_version=qrels_version)
         elif not qrels_exist:
             logger.warning(f"Qrels nicht gefunden: {qrels_path}")
     else:
         logger.info(
-            "Qrels bereits in DB, überspringe Laden (--reload-gold zum Neu-Laden)"
+            f"Qrels (Version: {qrels_version}) bereits in DB, überspringe Laden"
         )
 
     if reload_gold or not answers_exist:
@@ -448,7 +457,7 @@ def score(
         )
 
     # ================================================================
-    # GOLD-DATEN AUS DB LADEN
+    # GOLD-DATEN AUS DB LADEN (nur für diese Version!)
     # ================================================================
     gold_map: Dict[int, Dict[str, int]] = {}
     with pool.connection() as conn, conn.cursor() as cur:
@@ -457,9 +466,9 @@ def score(
             SELECT ge.query_pk, ge.chunk_id, ge.relevance
             FROM ragrun.gold_evidence ge
             JOIN ragrun.queries q ON ge.query_pk = q.id
-            WHERE q.dataset_name = %s
+            WHERE q.dataset_name = %s AND ge.qrels_version = %s
             """,
-            (cfg.dataset,),
+            (cfg.dataset, qrels_version),
         )
         for qpk, cid, rel in cur.fetchall():
             gold_map.setdefault(qpk, {})[cid] = rel
@@ -600,31 +609,52 @@ def score(
                 upsert_score(run_id, query_pk, k, float(v))
 
         # ============================================================
-        # LLM-JUDGE FACTUAL CONSISTENCY (selene-mini)
+        # LLM-JUDGE: REFERENCE-BASED (Factual Consistency)
         # ============================================================
         eval_cfg = cfg.factors.get("evaluation", {})
         use_llm_judge = eval_cfg.get("use_llm_judge", True)
+        # Erweiterung: Granulare Kontrolle über Metriken
+        judge_metrics = eval_cfg.get("llm_metrics", ["consistency"])
         judge_model = eval_cfg.get("judge_model", "atla/selene-mini")
 
-        if use_llm_judge and answer_text and gold_answers:
-            factual_results = judge_factual_consistency(
-                query=query_text,
-                response=answer_text,
-                gold_answer=gold_answers[0],
-                model=judge_model,
-            )
-            upsert_score(
-                run_id,
-                query_pk,
-                "factual_consistency_score",
-                float(factual_results["factual_consistency_score"]),
-            )
-            upsert_score(
-                run_id,
-                query_pk,
-                "factual_consistency_normalized",
-                float(factual_results["factual_consistency_normalized"]),
-            )
+        if use_llm_judge and answer_text:
+            # 1. Factual Consistency (Reference Comparison)
+            if gold_answers and "consistency" in judge_metrics:
+                factual_results = judge_factual_consistency(
+                    query=query_text,
+                    response=answer_text,
+                    gold_answer=gold_answers[0],
+                    model=judge_model,
+                )
+                upsert_score(run_id, query_pk, "factual_consistency_score", float(factual_results["factual_consistency_score"]), details={"reasoning": factual_results.get("reasoning")})
+                upsert_score(run_id, query_pk, "factual_consistency_normalized", float(factual_results["factual_consistency_normalized"]), details={"reasoning": factual_results.get("reasoning")})
+
+            # 2. Answer Relevance (Query-Response Check)
+            if "relevance" in judge_metrics:
+                rel_results = judge_answer_relevance(
+                    query=query_text,
+                    response=answer_text,
+                    model=judge_model
+                )
+                upsert_score(run_id, query_pk, "llm_answer_relevance", float(rel_results["answer_relevance_normalized"]), details={"reasoning": rel_results.get("reasoning")})
+
+            # 3. Context Relevance (Query-Context Check)
+            if "relevance" in judge_metrics and cited_texts:
+                 ctx_results = judge_context_relevance(
+                     query=query_text,
+                     chunks=cited_texts,
+                     model=judge_model
+                 )
+                 upsert_score(run_id, query_pk, "llm_context_relevance", float(ctx_results["context_relevance_normalized"]), details={"reasoning": ctx_results.get("reasoning")})
+
+            # 4. Faithfulness (Response-Context Check)
+            if "faithfulness" in judge_metrics and cited_texts:
+                faith_results = judge_faithfulness(
+                    response=answer_text,
+                    chunks=cited_texts,
+                    model=judge_model
+                )
+                upsert_score(run_id, query_pk, "llm_faithfulness", float(faith_results["faithfulness_normalized"]), details={"reasoning": faith_results.get("reasoning"), "hallucinated_statements": faith_results.get("hallucinated_statements")})
 
         # ============================================================
         # H2 GATING-METRIKEN
@@ -714,49 +744,41 @@ def score(
                     if isinstance(value, (int, float)):
                         upsert_score(run_id, query_pk, metric_name, float(value))
 
+    # Basis-Metriken (immer berechnen/reporten)
+    default_metrics = {
+             # Retrieval
+            "recall@3", "recall@5", "recall@10",
+            "mrr@3", "mrr@5", "mrr@10",
+            "ndcg@3", "ndcg@5", "ndcg@10",
+            # Generation
+            "semantic_sim", "rouge_l_recall", "content_f1", "bertscore_f1",
+            # Faithfulness
+            "citation_recall", "citation_precision",
+            # LLM-Judge (Legacy/Always)
+            "factual_consistency_score", "factual_consistency_normalized",
+            # H2 Gating
+            "gating_lane_ids_recall", "gating_avg_gating_recall", "gating_avg_gating_precision",
+            "h2_error_rate", "h2_structure_violation_rate", "h2_hallucination_rate",
+            "h2_hint_adherence", "h2_knowledge_score", "h2_context_respected",
+            "h2_integration_score", "h2_scope_violation_rate", "llm_judge_used",
+    }
+    
+    # Metriken aus der Config hinzufügen (Primary/Secondary)
+    cfg_metrics = set()
+    if cfg and cfg.metrics:
+        # Pydantic model vs dict access check
+        m = cfg.metrics if isinstance(cfg.metrics, dict) else cfg.metrics.model_dump()
+        cfg_metrics.update(m.get("primary", []))
+        cfg_metrics.update(m.get("secondary", []))
+        # Auch custom groups falls vorhanden
+        if "ragas" in m:
+             cfg_metrics.update(m["ragas"])
+
+    final_metrics = list(default_metrics.union(cfg_metrics))
+
     report_path = aggregate_and_store(
         run_id,
-        metrics=[
-            # Retrieval
-            "recall@3",
-            "recall@5",
-            "recall@10",
-            "mrr@3",
-            "mrr@5",
-            "mrr@10",
-            "ndcg@3",
-            "ndcg@5",
-            "ndcg@10",
-            # Generation
-            "semantic_sim",
-            "rouge_l_recall",
-            "content_f1",
-            "bertscore_f1",
-            # Faithfulness
-            "citation_recall",
-            "citation_precision",
-            # LLM-Judge
-            "factual_consistency_score",
-            "factual_consistency_normalized",
-            # H2 Gating
-            "gating_lane_ids_recall",
-            "gating_node_ids_recall",
-            "gating_task_names_recall",
-            "gating_avg_gating_recall",
-            "gating_lane_ids_precision",
-            "gating_node_ids_precision",
-            "gating_task_names_precision",
-            "gating_avg_gating_precision",
-            "h2_error_rate",
-            "h2_structure_violation_rate",
-            "h2_hallucination_rate",
-            "h2_hint_adherence",
-            "h2_knowledge_score",
-            "h2_context_respected",
-            "h2_integration_score",
-            "h2_scope_violation_rate",
-            "llm_judge_used",
-        ],
+        metrics=final_metrics,
     )
     typer.echo(f"Scores computed. Report written to {report_path}")
 
@@ -821,6 +843,10 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
             "primary",
             ["recall@5", "factual_consistency_normalized", "semantic_sim"],
         )
+        secondary_metrics = raw.get("metrics", {}).get(
+            "secondary",
+            ["recall@3", "recall@10", "citation_recall"],
+        )
 
         try:
             report_path = generate_study_report(
@@ -828,6 +854,7 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
                 baseline_run_name=baseline_cfg.run_name,
                 variant_run_names=variant_names,
                 primary_metrics=primary_metrics,
+                secondary_metrics=secondary_metrics,
             )
             typer.echo(f"\n📊 Study Report: {report_path}")
         except Exception as e:

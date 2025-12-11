@@ -51,9 +51,17 @@ def load_queries(dataset_name: str, path: str) -> Dict[str, int]:
     return id_map
 
 
-def load_qrels(dataset_name: str, qid_to_pk: Dict[str, int], path: str) -> None:
+def load_qrels(
+    dataset_name: str, 
+    qid_to_pk: Dict[str, int], 
+    path: str,
+    qrels_version: str = "1800",
+) -> None:
     """
     Lädt Qrels UND optionales Gating aus derselben JSONL-Datei.
+    
+    Args:
+        qrels_version: Identifikator für Chunking-Strategie ('1800', 'semantic', etc.)
 
     Format pro Zeile:
     {
@@ -111,9 +119,9 @@ def load_qrels(dataset_name: str, qid_to_pk: Dict[str, int], path: str) -> None:
             if gating and qpk not in gating_buf:
                 gating_buf[qpk] = gating
 
-    # Qrels speichern
+    # Qrels speichern mit Version
     for qpk, qrels in buf.items():
-        insert_qrels(qpk, qrels)
+        insert_qrels(qpk, qrels, qrels_version=qrels_version)
 
     # Gating speichern
     for qpk, gating in gating_buf.items():

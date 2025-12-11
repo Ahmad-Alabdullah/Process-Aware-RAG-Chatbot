@@ -171,6 +171,9 @@ metrics:
     - recall@5
     - ndcg@5
     - factual_consistency_normalized
+    - llm_answer_relevance
+    - llm_context_relevance
+    - llm_faithfulness
     - semantic_sim
   
   secondary:

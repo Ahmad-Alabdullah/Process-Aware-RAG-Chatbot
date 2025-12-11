@@ -23,7 +23,7 @@ def _get_reranker():
     global _reranker_model
     if _reranker_model is None:
         try:
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+            from transformers import AutoModel, AutoTokenizer
 
             model_name = "jinaai/jina-reranker-v3"
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -32,12 +32,12 @@ def _get_reranker():
                 "tokenizer": AutoTokenizer.from_pretrained(
                     model_name, trust_remote_code=True
                 ),
-                "model": AutoModelForSequenceClassification.from_pretrained(
+                "model": AutoModel.from_pretrained(
                     model_name, trust_remote_code=True, dtype=torch.float16
                 ).to(device),
                 "device": device,
             }
-            # Fix: Qwen3-basierte Modelle haben kein pad_token
+            # Qwen3-basierte Modelle haben kein pad_token
             if _reranker_model["tokenizer"].pad_token is None:
                 _reranker_model["tokenizer"].pad_token = _reranker_model["tokenizer"].eos_token
                 logger.info(f"pad_token gesetzt auf: {_reranker_model['tokenizer'].pad_token}")
@@ -46,6 +46,25 @@ def _get_reranker():
             logger.error(f"Jina Reranker v3 konnte nicht geladen werden: {e}")
             return None
     return _reranker_model
+
+
+def unload_reranker():
+    """Entlädt den Reranker aus dem GPU-Speicher, um Platz für Ollama zu machen."""
+    global _reranker_model
+    if _reranker_model is not None:
+        try:
+            del _reranker_model["model"]
+            del _reranker_model["tokenizer"]
+            _reranker_model = None
+            
+            # GPU Cache leeren
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            logger.info("Reranker aus GPU-Speicher entladen")
+        except Exception as e:
+            logger.warning(f"Fehler beim Entladen des Rerankers: {e}")
 
 
 def rerank(
@@ -83,49 +102,34 @@ def rerank(
         return documents[:top_k]
 
     try:
-        tokenizer = reranker["tokenizer"]
         model = reranker["model"]
-        device = reranker["device"]
-
-        # Paare erstellen: (query, document_text)
+        
+        # Texte extrahieren
         texts = [doc.get(text_key, "") for doc in documents]
-        pairs = [[query, text] for text in texts]
-
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-
-        scores = []
-        with torch.no_grad():
-            for pair in pairs:
-                inputs = tokenizer(
-                    [pair],
-                    padding=False,
-                    truncation=True,
-                    max_length=8192,
-                    return_tensors="pt",
-                ).to(device)
-                
-                outputs = model(**inputs)
-                logits = outputs.logits.squeeze()
-                score = logits[0].item() if logits.dim() > 0 else logits.item()
-                scores.append(score)
-
-        scored_docs = []
-        for doc, score in zip(documents, scores):
-            doc_copy = doc.copy()
-            doc_copy["rerank_score"] = float(score)
+        
+        # returns list of dicts: {'document': str, 'relevance_score': float, 'index': int}
+        results = model.rerank(query, texts, max_query_length=512, max_doc_length=4096)
+        
+        # Sortieren nach Score (höher = besser)
+        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        
+        # Top-K auswählen und Original-Dokumente anreichern
+        ranked_docs = []
+        for res in results[:top_k]:
+            idx = res["index"]
+            score = float(res["relevance_score"])
+            
+            doc_copy = documents[idx].copy()
+            doc_copy["rerank_score"] = score
             doc_copy["source"] = "ce"
-            scored_docs.append(doc_copy)
-
-        # Nach Score sortieren (höher = besser)
-        ranked = sorted(scored_docs, key=lambda x: x["rerank_score"], reverse=True)
+            ranked_docs.append(doc_copy)
 
         logger.debug(
             f"Reranking: {len(documents)} docs → top {top_k}, "
-            f"scores: [{', '.join(f'{d['rerank_score']:.3f}' for d in ranked[:3])}]"
+            f"scores: [{', '.join(f'{d['rerank_score']:.3f}' for d in ranked_docs[:3])}]"
         )
-
-        return ranked[:top_k]
+        
+        return ranked_docs
 
     except Exception as e:
         logger.error(f"Reranking Fehler: {e}")

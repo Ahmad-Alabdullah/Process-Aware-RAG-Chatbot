@@ -1,0 +1,27 @@
+baseline: ENHANCED_BASELINE
+rankings:
+  factual_consistency_normalized:
+  - name: GSO_S5_hyde
+    value: 0.5277777777777778
+  - name: ENHANCED_BASELINE
+    value: 0.5185185185185185
+  - name: GSO_S5_citation_first
+    value: 0.5069444444444444
+  recall@5:
+  - name: ENHANCED_BASELINE
+    value: 0.7612433862433863
+  - name: GSO_S5_citation_first
+    value: 0.7612433862433863
+  - name: GSO_S5_hyde
+    value: 0.7401785714285714
+  semantic_sim:
+  - name: ENHANCED_BASELINE
+    value: 0.8471993103350637
+  - name: GSO_S5_hyde
+    value: 0.8354273884134391
+  - name: GSO_S5_citation_first
+    value: 0.8216012844189838
+study_name: study_gso_step5_hyde_citation
+variants:
+- GSO_S5_hyde
+- GSO_S5_citation_first

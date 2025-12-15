@@ -321,43 +321,72 @@ async def _run_all(
 @app.command()
 def run(
     config: str,
+    repeats: int = typer.Option(1, "--repeats", "-r", help="Number of repeat runs for variance reduction"),
 ):
-    """Execute a single run using the YAML config."""
+    """Execute a single run using the YAML config. Use --repeats for multiple runs."""
     cfg = RunConfig(**yaml.safe_load(open(config, "r", encoding="utf-8").read()))
-    run_id = upsert_run(cfg.run_name, config_json=cfg.model_dump())
-    typer.echo(f"Run '{cfg.run_name}' -> id={run_id}")
+    base_name = cfg.run_name
+    run_ids = []
+    
+    for i in range(repeats):
+        # Use suffix for repeats
+        cfg.run_name = f"{base_name}_r{i+1}" if repeats > 1 else base_name
+        run_id = upsert_run(cfg.run_name, config_json=cfg.model_dump())
+        run_ids.append((cfg.run_name, run_id))
+        typer.echo(f"Run '{cfg.run_name}' -> id={run_id}")
 
-    pool = get_pool()
-    with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            select id, query_id, text, process_name, process_id, roles, current_node_id, definition_id
-            from ragrun.queries
-            where dataset_name = %s
-            """,
-            (cfg.dataset,),
-        )
-        rows = [
-            QueryRow(
-                id=r[0],
-                query_id=r[1],
-                text=r[2],
-                process_name=r[3],
-                process_id=r[4],
-                roles=r[5],
-                current_node_id=r[6],
-                definition_id=r[7],
+        pool = get_pool()
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                select id, query_id, text, process_name, process_id, roles, current_node_id, definition_id
+                from ragrun.queries
+                where dataset_name = %s
+                """,
+                (cfg.dataset,),
             )
-            for r in cur.fetchall()
-        ]
+            rows = [
+                QueryRow(
+                    id=r[0],
+                    query_id=r[1],
+                    text=r[2],
+                    process_name=r[3],
+                    process_id=r[4],
+                    roles=r[5],
+                    current_node_id=r[6],
+                    definition_id=r[7],
+                )
+                for r in cur.fetchall()
+            ]
 
-    if not rows:
-        typer.echo(f"No queries for dataset='{cfg.dataset}'")
-        raise typer.Exit(1)
+        if not rows:
+            typer.echo(f"No queries for dataset='{cfg.dataset}'")
+            raise typer.Exit(1)
 
-    typer.echo(f"Executing {len(rows)} queries...")
-    asyncio.run(_run_all(rows, cfg, run_id))
-    typer.echo("Done.")
+        typer.echo(f"Executing {len(rows)} queries (repeat {i+1}/{repeats})...")
+        asyncio.run(_run_all(rows, cfg, run_id))
+        typer.echo(f"Repeat {i+1}/{repeats} done.")
+        
+        # Automatically score after each run
+        score(cfg.run_name)
+    
+    # Generate aggregated report for repeated runs
+    if repeats > 1:
+        typer.echo(f"\n✅ Completed {repeats} runs (all scored): {[name for name, _ in run_ids]}")
+        
+        # Generate aggregated report
+        from .reporting import generate_aggregated_run_report
+        try:
+            run_names = [name for name, _ in run_ids]
+            report_path = generate_aggregated_run_report(
+                base_name=base_name,
+                run_names=run_names,
+            )
+            typer.echo(f"📊 Aggregated Report: {report_path}")
+        except Exception as e:
+            typer.echo(f"⚠️ Aggregated Report Fehler: {e}")
+    else:
+        typer.echo("Done.")
 
 
 @app.command()
@@ -785,7 +814,7 @@ def score(
 
 @app.command()
 def study(study_config: str, execute: bool = True, fractional: bool = False):
-    """Run a plan of OFAT variants or a factorial spec."""
+    """Run a plan of OFAT variants or a factorial spec. Supports 'repeats' in config."""
     raw = yaml.safe_load(open(study_config, "r", encoding="utf-8").read())
     baseline_path = raw.get("baseline", "configs/baseline.yaml")
     baseline_cfg = RunConfig(
@@ -793,7 +822,10 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
     )
 
     variants = raw.get("variants", [])
-    variant_names: List[str] = []  # Sammle alle Variant-Namen
+    repeats = raw.get("repeats", 1)  # Number of repeats per variant
+    
+    variant_names: List[str] = []  # All run names (including repeats)
+    variant_groups: Dict[str, List[str]] = {}  # Group runs by variant name
     
     # Track current model for unloading between runs
     current_model = _get_model_from_config(baseline_cfg)
@@ -801,10 +833,10 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
     for var in variants:
         name = var.get("name", "UNNAMED")
         override = var.get("override", {})
+        variant_groups[name] = []  # Initialize group
 
         cfg = baseline_cfg.model_copy(deep=True)
-        cfg.run_name = name
-
+        
         if "qa_payload" in override:
             cfg.qa_payload.update(override["qa_payload"])
         if "factors" in override:
@@ -814,29 +846,35 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
                 else:
                     cfg.factors[kk] = vv
 
-        temp_cfg_path = Path(f"configs/_temp_{name}.yaml")
-        temp_cfg_path.write_text(
-            yaml.dump(cfg.model_dump(), default_flow_style=False, allow_unicode=True)
-        )
-
-        typer.echo(f"\n=== Variant: {cfg.run_name} ===")
-        if execute:
-            # Check if model changed - unload ALL models to free VRAM
-            new_model = _get_model_from_config(cfg)
-            if new_model != current_model:
-                typer.echo(f"Model changed: {current_model} → {new_model}")
-                typer.echo("Unloading all models from VRAM...")
-                _unload_all_ollama_models()
-                current_model = new_model
+        # Run multiple repeats
+        for repeat_idx in range(repeats):
+            repeat_name = f"{name}_r{repeat_idx+1}" if repeats > 1 else name
+            cfg.run_name = repeat_name
             
-            run(str(temp_cfg_path))
-            score(cfg.run_name)
-            variant_names.append(cfg.run_name)
+            temp_cfg_path = Path(f"configs/_temp_{repeat_name}.yaml")
+            temp_cfg_path.write_text(
+                yaml.dump(cfg.model_dump(), default_flow_style=False, allow_unicode=True)
+            )
 
-        temp_cfg_path.unlink(missing_ok=True)
+            typer.echo(f"\n=== Variant: {repeat_name} (repeat {repeat_idx+1}/{repeats}) ===")
+            if execute:
+                # Check if model changed - unload ALL models to free VRAM
+                new_model = _get_model_from_config(cfg)
+                if new_model != current_model:
+                    typer.echo(f"Model changed: {current_model} → {new_model}")
+                    typer.echo("Unloading all models from VRAM...")
+                    _unload_all_ollama_models()
+                    current_model = new_model
+                
+                run(str(temp_cfg_path), repeats=1)  # run() auto-scores
+                variant_names.append(repeat_name)
+                variant_groups[name].append(repeat_name)
+
+            temp_cfg_path.unlink(missing_ok=True)
 
     if execute and variant_names:
         from .reporting import generate_study_report
+        from .db import get_pool
 
         study_name = raw.get("name", Path(study_config).stem)
         primary_metrics = raw.get("metrics", {}).get(
@@ -848,13 +886,34 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
             ["recall@3", "recall@10", "citation_recall"],
         )
 
+        # Detect if baseline has repeats (e.g., ENHANCED_BASELINE_r1, _r2, _r3)
+        baseline_run_name = baseline_cfg.run_name
+        baseline_runs = None
+        pool = get_pool()
+        
+        # Check for existing baseline repeats in DB
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT run_name FROM runs 
+                       WHERE run_name LIKE %s 
+                       ORDER BY run_name""",
+                    (f"{baseline_run_name}_r%",)
+                )
+                found_runs = [row[0] for row in cur.fetchall()]
+                if found_runs:
+                    baseline_runs = found_runs
+                    typer.echo(f"📊 Using aggregated baseline: {baseline_runs}")
+
         try:
             report_path = generate_study_report(
                 study_name=study_name,
-                baseline_run_name=baseline_cfg.run_name,
+                baseline_run_name=baseline_run_name,
                 variant_run_names=variant_names,
                 primary_metrics=primary_metrics,
                 secondary_metrics=secondary_metrics,
+                variant_groups=variant_groups if repeats > 1 else None,
+                baseline_runs=baseline_runs,  # Pass baseline runs for aggregation
             )
             typer.echo(f"\n📊 Study Report: {report_path}")
         except Exception as e:

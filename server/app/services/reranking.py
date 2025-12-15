@@ -1,10 +1,11 @@
 """
-Reranking-Service mit Jina Reranker v3.
+Reranking-Service mit BGE Reranker v2-m3.
 
-Modell: jinaai/jina-reranker-v3
+Modell: BAAI/bge-reranker-v2-m3
 - Multilingual (inkl. Deutsch)
 - Bis zu 8192 Tokens Kontext
 - Cross-Encoder Architektur
+- Weniger VRAM-Verbrauch als Jina v3
 """
 
 from __future__ import annotations
@@ -19,31 +20,25 @@ _reranker_model = None
 
 
 def _get_reranker():
-    """Lazy Loading des Jina Reranker v3 Modells."""
+    """Lazy Loading des BGE Reranker v2-m3 Modells."""
     global _reranker_model
     if _reranker_model is None:
         try:
-            from transformers import AutoModel, AutoTokenizer
+            from FlagEmbedding import FlagReranker
 
-            model_name = "jinaai/jina-reranker-v3"
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model_name = "BAAI/bge-reranker-v2-m3"
+            use_fp16 = torch.cuda.is_available()
 
             _reranker_model = {
-                "tokenizer": AutoTokenizer.from_pretrained(
-                    model_name, trust_remote_code=True
+                "model": FlagReranker(
+                    model_name,
+                    use_fp16=use_fp16,
                 ),
-                "model": AutoModel.from_pretrained(
-                    model_name, trust_remote_code=True, dtype=torch.float16
-                ).to(device),
-                "device": device,
+                "device": "cuda" if torch.cuda.is_available() else "cpu",
             }
-            # Qwen3-basierte Modelle haben kein pad_token
-            if _reranker_model["tokenizer"].pad_token is None:
-                _reranker_model["tokenizer"].pad_token = _reranker_model["tokenizer"].eos_token
-                logger.info(f"pad_token gesetzt auf: {_reranker_model['tokenizer'].pad_token}")
-            logger.info(f"Jina Reranker v3 geladen (device={device})")
+            logger.info(f"BGE Reranker v2-m3 geladen (fp16={use_fp16})")
         except Exception as e:
-            logger.error(f"Jina Reranker v3 konnte nicht geladen werden: {e}")
+            logger.error(f"BGE Reranker v2-m3 konnte nicht geladen werden: {e}")
             return None
     return _reranker_model
 
@@ -54,7 +49,6 @@ def unload_reranker():
     if _reranker_model is not None:
         try:
             del _reranker_model["model"]
-            del _reranker_model["tokenizer"]
             _reranker_model = None
             
             # GPU Cache leeren
@@ -74,7 +68,7 @@ def rerank(
     text_key: str = "text",
 ) -> List[Dict[str, Any]]:
     """
-    Rerankt Dokumente mit Jina Reranker v3 Cross-Encoder.
+    Rerankt Dokumente mit BGE Reranker v2-m3 Cross-Encoder.
 
     Args:
         query: Suchanfrage
@@ -104,23 +98,25 @@ def rerank(
     try:
         model = reranker["model"]
         
-        # Texte extrahieren
-        texts = [doc.get(text_key, "") for doc in documents]
+        # Query-Document Paare erstellen
+        pairs = [[query, doc.get(text_key, "")] for doc in documents]
         
-        # returns list of dicts: {'document': str, 'relevance_score': float, 'index': int}
-        results = model.rerank(query, texts, max_query_length=512, max_doc_length=4096)
+        # FlagReranker.compute_score() gibt Liste von Scores zurück
+        scores = model.compute_score(pairs, normalize=True)
         
-        # Sortieren nach Score (höher = besser)
-        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        # Falls nur ein Dokument, ist scores ein Float statt Liste
+        if isinstance(scores, (int, float)):
+            scores = [scores]
+        
+        # Scores mit Indizes kombinieren und sortieren
+        scored_indices = list(enumerate(scores))
+        scored_indices.sort(key=lambda x: x[1], reverse=True)
         
         # Top-K auswählen und Original-Dokumente anreichern
         ranked_docs = []
-        for res in results[:top_k]:
-            idx = res["index"]
-            score = float(res["relevance_score"])
-            
+        for idx, score in scored_indices[:top_k]:
             doc_copy = documents[idx].copy()
-            doc_copy["rerank_score"] = score
+            doc_copy["rerank_score"] = float(score)
             doc_copy["source"] = "ce"
             ranked_docs.append(doc_copy)
 

@@ -1,0 +1,48 @@
+baseline: OFAT_chunk_semantic_qwen3
+rankings:
+  factual_consistency_normalized:
+  - name: GSO_S3_cot
+    value: 0.5735294117647058
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.5555555555555556
+  - name: GSO_S3_qwen2_5
+    value: 0.5416666666666666
+  - name: GSO_S3_deepseek-r1:8b
+    value: 0.5
+  - name: GSO_S3_deepseek-r1:7b
+    value: 0.5
+  - name: GSO_S3_llama31
+    value: 0.5
+  recall@5:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.7612433862433863
+  - name: GSO_S3_deepseek-r1:8b
+    value: 0.7612433862433863
+  - name: GSO_S3_deepseek-r1:7b
+    value: 0.7612433862433863
+  - name: GSO_S3_llama31
+    value: 0.7612433862433863
+  - name: GSO_S3_qwen2_5
+    value: 0.7612433862433863
+  - name: GSO_S3_cot
+    value: 0.7612433862433863
+  semantic_sim:
+  - name: GSO_S3_llama31
+    value: 0.866045620482538
+  - name: GSO_S3_qwen2_5
+    value: 0.846836037606305
+  - name: GSO_S3_cot
+    value: 0.8389232748333474
+  - name: GSO_S3_deepseek-r1:8b
+    value: 0.8345505260795857
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.8306389874827447
+  - name: GSO_S3_deepseek-r1:7b
+    value: 0.7979988780981242
+study_name: study_gso_llm_prompt
+variants:
+- GSO_S3_deepseek-r1:8b
+- GSO_S3_deepseek-r1:7b
+- GSO_S3_llama31
+- GSO_S3_qwen2_5
+- GSO_S3_cot

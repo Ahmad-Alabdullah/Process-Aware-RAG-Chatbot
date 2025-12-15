@@ -417,17 +417,21 @@ def generate_study_report(
     secondary_metrics: List[str] = None,
     out_dir: Optional[str] = None,
     significance_iters: int = 2000,
+    variant_groups: Optional[Dict[str, List[str]]] = None,  # Groups for repeat aggregation
+    baseline_runs: Optional[List[str]] = None,  # For baseline aggregation (e.g., _r1, _r2, _r3)
 ) -> str:
     """
     Generiert Vergleichsreport für eine Study (OFAT, GSO, etc.).
 
     Args:
         study_name: Name der Study
-        baseline_run_name: Name des Baseline-Runs
+        baseline_run_name: Name des Baseline-Runs (oder Gruppen-Name bei Aggregation)
         variant_run_names: Namen der Varianten-Runs
         primary_metrics: Primäre Metriken für Vergleich
         out_dir: Ausgabeverzeichnis
         significance_iters: Iterationen für Bootstrap-Test
+        variant_groups: Gruppierung für Varianten-Aggregation
+        baseline_runs: Liste von Baseline-Runs für Aggregation (z.B. ['BASE_r1', 'BASE_r2'])
     """
     if primary_metrics is None:
         primary_metrics = ["recall@5", "factual_consistency_normalized", "semantic_sim"]
@@ -438,17 +442,39 @@ def generate_study_report(
     out_path = Path(out_dir or "reports")
     out_path.mkdir(parents=True, exist_ok=True)
 
-    # Baseline-Daten laden
-    baseline_data = _load_run_data(pool, baseline_run_name)
-    if not baseline_data:
-        raise ValueError(f"Baseline '{baseline_run_name}' nicht gefunden")
+    # Baseline-Daten laden (mit optionaler Aggregation)
+    if baseline_runs and len(baseline_runs) > 1:
+        # Aggregierte Baseline
+        baseline_data = _aggregate_repeated_runs(pool, baseline_run_name, baseline_runs)
+        if not baseline_data:
+            raise ValueError(f"Baseline runs {baseline_runs} nicht gefunden")
+    else:
+        # Einzelne Baseline
+        baseline_data = _load_run_data(pool, baseline_run_name)
+        if not baseline_data:
+            raise ValueError(f"Baseline '{baseline_run_name}' nicht gefunden")
 
-    # Varianten-Daten laden
+    # Varianten-Daten laden (mit Aggregation bei Repeats)
     variants_data = []
-    for name in variant_run_names:
-        data = _load_run_data(pool, name)
-        if data:
-            variants_data.append(data)
+    has_repeats = variant_groups is not None and len(variant_groups) > 0
+    
+    if has_repeats:
+        # Use aggregated data from grouped runs
+        for group_name, run_names in variant_groups.items():
+            if len(run_names) > 1:
+                # Aggregate multiple repeats
+                data = _aggregate_repeated_runs(pool, group_name, run_names)
+            else:
+                # Single run, no aggregation needed
+                data = _load_run_data(pool, run_names[0])
+            if data:
+                variants_data.append(data)
+    else:
+        # Original behavior: load each variant individually
+        for name in variant_run_names:
+            data = _load_run_data(pool, name)
+            if data:
+                variants_data.append(data)
 
     # Report generieren
     lines = [
@@ -485,7 +511,9 @@ def generate_study_report(
     for var in variants_data:
         cells = []
         for m in primary_metrics:
-            var_val = var["aggregates"].get(m, {}).get("mean", 0)
+            var_agg = var["aggregates"].get(m, {})
+            var_val = var_agg.get("mean", 0)
+            var_std = var_agg.get("std", None)  # Only available for repeated runs
             base_val = baseline_data["aggregates"].get(m, {}).get("mean", 0)
             delta = var_val - base_val
 
@@ -500,9 +528,17 @@ def generate_study_report(
 
             higher_is_better = _get_higher_is_better(m)
             delta_str = _format_delta(delta, higher_is_better)
-            cells.append(f"{var_val:.4f} ({delta_str}{sig})")
+            
+            # Show std if available (from repeated runs)
+            if var_std is not None and var_std > 0:
+                cells.append(f"{var_val:.4f} ± {var_std:.4f} ({delta_str}{sig})")
+            else:
+                cells.append(f"{var_val:.4f} ({delta_str}{sig})")
 
-        lines.append(f"| {var['run_name']} | " + " | ".join(cells) + " |")
+        # Add repeat indicator if applicable
+        repeat_count = var.get("repeat_count", None)
+        name_suffix = f" (n={repeat_count})" if repeat_count and repeat_count > 1 else ""
+        lines.append(f"| {var['run_name']}{name_suffix} | " + " | ".join(cells) + " |")
 
     lines.extend(
         [
@@ -636,6 +672,177 @@ def generate_study_report(
             writer.writerow(row)
 
     return str(md_path)
+
+
+def generate_aggregated_run_report(
+    base_name: str,
+    run_names: List[str],
+    out_dir: Optional[str] = None,
+) -> str:
+    """
+    Generates an aggregated report for repeated runs.
+    
+    Args:
+        base_name: Base name of the run (e.g., 'ENHANCED_BASELINE')
+        run_names: List of repeat run names (e.g., ['ENHANCED_BASELINE_r1', 'ENHANCED_BASELINE_r2'])
+        out_dir: Output directory for the report
+    
+    Returns:
+        Path to the generated markdown report
+    """
+    pool = get_pool()
+    out_path = Path(out_dir or "reports")
+    out_path.mkdir(parents=True, exist_ok=True)
+    
+    # Aggregate repeated runs
+    aggregated_data = _aggregate_repeated_runs(pool, base_name, run_names)
+    if not aggregated_data:
+        raise ValueError(f"Could not aggregate runs: {run_names}")
+    
+    repeat_count = aggregated_data.get("repeat_count", len(run_names))
+    
+    # Generate report
+    lines = [
+        f"# Aggregated Report: {base_name}",
+        "",
+        f"**Repeats:** {repeat_count}",
+        f"**Runs:** {', '.join(run_names)}",
+        "",
+        "---",
+        "",
+        "## Aggregated Metrics (Mean ± Std)",
+        "",
+    ]
+    
+    # Group metrics by category
+    for group_key, group_info in METRIC_GROUPS.items():
+        group_metrics = group_info["metrics"]
+        available_metrics = [m for m in group_metrics if m in aggregated_data["aggregates"]]
+        
+        if not available_metrics:
+            continue
+            
+        lines.extend([
+            f"### {group_info['name']}",
+            "",
+            "| Metrik | Mean | Std | 95% CI | N |",
+            "|--------|-----:|----:|--------|--:|",
+        ])
+        
+        for m in available_metrics:
+            agg = aggregated_data["aggregates"][m]
+            mean = agg.get("mean", 0)
+            std = agg.get("std", 0)
+            ci_low = agg.get("ci_low", mean)
+            ci_high = agg.get("ci_high", mean)
+            n = agg.get("n", 0)
+            
+            ci_str = f"[{ci_low:.4f}, {ci_high:.4f}]"
+            lines.append(f"| {m} | {mean:.4f} | {std:.4f} | {ci_str} | {n} |")
+        
+        lines.append("")
+    
+    # Individual run values
+    lines.extend([
+        "---",
+        "",
+        "## Individual Run Values",
+        "",
+    ])
+    
+    # Get sample metrics to show
+    sample_metrics = ["recall@5", "factual_consistency_normalized", "llm_faithfulness", "semantic_sim"]
+    available_sample = [m for m in sample_metrics if m in aggregated_data["aggregates"]]
+    
+    if available_sample:
+        header = "| Run | " + " | ".join(available_sample) + " |"
+        separator = "|-----|" + "|".join(["----:" for _ in available_sample]) + "|"
+        lines.extend([header, separator])
+        
+        for run_name in run_names:
+            run_data = _load_run_data(pool, run_name)
+            if run_data:
+                cells = []
+                for m in available_sample:
+                    val = run_data["aggregates"].get(m, {}).get("mean", 0)
+                    cells.append(f"{val:.4f}")
+                lines.append(f"| {run_name} | " + " | ".join(cells) + " |")
+        
+        lines.append("")
+    
+    # Footer
+    lines.extend([
+        "---",
+        "",
+        f"*Report generiert am {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+    ])
+    
+    # Write report
+    md_path = out_path / f"aggregated_{base_name}.md"
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    
+    return str(md_path)
+
+
+def _aggregate_repeated_runs(
+    pool, 
+    group_name: str, 
+    run_names: List[str]
+) -> Optional[Dict[str, Any]]:
+    """
+    Aggregates metrics across multiple repeated runs.
+    
+    Args:
+        pool: Database connection pool
+        group_name: Name for the aggregated group (e.g., 'ENHANCED_BASELINE')
+        run_names: List of run names to aggregate (e.g., ['ENHANCED_BASELINE_r1', 'ENHANCED_BASELINE_r2'])
+    
+    Returns:
+        Aggregated run data with mean ± std for each metric
+    """
+    # Load all runs
+    runs_data = []
+    for name in run_names:
+        data = _load_run_data(pool, name)
+        if data:
+            runs_data.append(data)
+    
+    if not runs_data:
+        return None
+    
+    # Aggregate metrics
+    all_metrics = set()
+    for run in runs_data:
+        all_metrics.update(run["aggregates"].keys())
+    
+    aggregates = {}
+    for metric in all_metrics:
+        values = []
+        for run in runs_data:
+            val = run["aggregates"].get(metric, {}).get("mean", None)
+            if val is not None:
+                values.append(val)
+        
+        if values:
+            mean_val = statistics.mean(values)
+            std_val = statistics.stdev(values) if len(values) > 1 else 0.0
+            aggregates[metric] = {
+                "mean": mean_val,
+                "std": std_val,
+                "n": len(values),
+                "runs": values,
+                "ci_low": mean_val - 1.96 * std_val / (len(values) ** 0.5) if len(values) > 1 else mean_val,
+                "ci_high": mean_val + 1.96 * std_val / (len(values) ** 0.5) if len(values) > 1 else mean_val,
+            }
+    
+    return {
+        "run_id": runs_data[0]["run_id"],  # Use first run's ID for bootstrap tests
+        "run_name": group_name,
+        "config": runs_data[0]["config"],
+        "aggregates": aggregates,
+        "repeat_count": len(runs_data),
+        "repeat_runs": run_names,
+    }
 
 
 def _load_run_data(pool, run_name: str) -> Optional[Dict[str, Any]]:

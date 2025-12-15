@@ -1,0 +1,56 @@
+name: study_gso_llm_prompt
+baseline: "configs/baseline_gso_qwen3_semantic.yaml"
+
+# GSO Step 3: LLM & Prompt Optimization
+# Baseline: Qwen3:8b + baseline prompt + temp=0.1
+# No reranking (decided in GSO Step 2)
+
+variants:
+
+  - name: GSO_S3_deepseek-r1:8b
+    override:
+      qa_payload:
+        model: "deepseek-r1:8b"
+      factors:
+        llm:
+          qa:
+            model: "deepseek-r1:8b"
+            num_ctx: 4096
+
+  - name: GSO_S3_deepseek-r1:7b
+    override:
+      qa_payload:
+        model: "deepseek-r1:7b"
+      factors:
+        llm:
+          qa:
+            model: "deepseek-r1:7b"
+            num_ctx: 4096
+
+  - name: GSO_S3_llama31
+    override:
+      qa_payload:
+        model: "llama3.1:8b"
+      factors:
+        llm:
+          qa:
+            model: "llama3.1:8b"
+            num_ctx: 4096
+
+  - name: GSO_S3_qwen2_5
+    override:
+      qa_payload:
+        model: "qwen2.5:7b-instruct"
+      factors:
+        llm:
+          qa:
+            model: "qwen2.5:7b-instruct"
+            num_ctx: 4096
+
+  - name: GSO_S3_cot
+    override:
+      qa_payload:
+        prompt_style: "cot"
+      factors:
+        prompt:
+          style: "cot"

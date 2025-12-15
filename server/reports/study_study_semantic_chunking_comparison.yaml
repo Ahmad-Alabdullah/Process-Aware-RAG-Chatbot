@@ -1,0 +1,20 @@
+baseline: OFAT_chunk_semantic_qwen3
+rankings:
+  llm_answer_relevance:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.6111111111111112
+  - name: SENTENCE_SEMANTIC
+    value: 0.6111111111111112
+  llm_context_relevance:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.5833333333333334
+  - name: SENTENCE_SEMANTIC
+    value: 0.5416666666666666
+  llm_faithfulness:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.6111111111111112
+  - name: SENTENCE_SEMANTIC
+    value: 0.5555555555555556
+study_name: study_semantic_chunking_comparison
+variants:
+- SENTENCE_SEMANTIC

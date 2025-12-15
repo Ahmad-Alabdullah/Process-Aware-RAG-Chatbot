@@ -1,0 +1,18 @@
+name: study_gso_step5_hyde_citation
+baseline: "configs/enhanced_baseline.yaml"
+repeats: 2
+
+# GSO Step 5: Optimierungen für Retrieval und Faithfulness
+# - HyDE: Hypothetical Document Embeddings für besseres Retrieval
+# - Citation-First: Zitat-basiertes Prompting für bessere Faithfulness
+
+variants:
+  - name: GSO_S5_hyde
+    override:
+      qa_payload:
+        use_hyde: true
+        
+  - name: GSO_S5_citation_first
+    override:
+      qa_payload:
+        prompt_style: "citation_first"

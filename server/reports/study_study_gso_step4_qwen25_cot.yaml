@@ -1,0 +1,20 @@
+baseline: OFAT_chunk_semantic_qwen3
+rankings:
+  factual_consistency_normalized:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.5555555555555556
+  - name: GSO_S4_qwen25_cot
+    value: 0.5277777777777778
+  recall@5:
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.7612433862433863
+  - name: GSO_S4_qwen25_cot
+    value: 0.7612433862433863
+  semantic_sim:
+  - name: GSO_S4_qwen25_cot
+    value: 0.8394084317442282
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.8306389874827447
+study_name: study_gso_step4_qwen25_cot
+variants:
+- GSO_S4_qwen25_cot

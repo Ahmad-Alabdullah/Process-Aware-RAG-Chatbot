@@ -1,0 +1,24 @@
+name: study_semantic_chunking_comparison
+baseline: "configs/baseline_gso_qwen3_semantic.yaml"
+
+# Comparison: Element-level (Unstructured) vs Sentence-level (NLTK) semantic chunking
+# Both use Qwen3 4b embedding model
+# Using LLM-Judge metrics only (no qrels needed)
+
+metrics:
+  primary:
+    - llm_faithfulness
+    - llm_context_relevance
+    - llm_answer_relevance
+  secondary:
+    - factual_consistency_normalized
+    - semantic_sim
+
+variants:
+  - name: SENTENCE_SEMANTIC
+    override:
+      factors:
+        chunking:
+          strategy: "sentence_semantic"
+        embeddings:
+          index_suffix: "semantic_sentence_qwen3"

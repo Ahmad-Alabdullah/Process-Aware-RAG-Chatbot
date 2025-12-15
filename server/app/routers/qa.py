@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from app.core.models.askModel import AskBody
 from app.core.prompt_builder import build_prompt
 from app.services.retrieval import hybrid_search
-from app.services.llm import ollama_generate
+from app.services.llm import ollama_generate, hyde_rewrite
 from app.services.gating import compute_gating, GatingMode
 from app.core.clients import get_logger
 from app.core.config import settings
@@ -76,9 +76,23 @@ def ask(
     #     gating.metadata.get("context_type"),
     # )
 
-    # 2) Retrieval mit optionalem Reranking
+    # 2) Optional HyDE Query Transformation
+    retrieval_query = body.query
+    hyde_doc = None
+    if body.use_hyde:
+        t_hyde_start = time_module.perf_counter()
+        hyde_doc = hyde_rewrite(body.query, model=body.model)
+        retrieval_query = hyde_doc  # Use hypothetical document for embedding
+        t_hyde_end = time_module.perf_counter()
+        logger.info(
+            "HyDE transformation took %.3f seconds (len=%d)",
+            t_hyde_end - t_hyde_start,
+            len(hyde_doc),
+        )
+
+    # 3) Retrieval mit optionalem Reranking
     ctx = hybrid_search(
-        body.query,
+        retrieval_query,  # Use HyDE-transformed query or original
         body.top_k,
         process_name=body.process_name,
         tags=body.tags or None,
@@ -99,7 +113,7 @@ def ask(
         body.rerank_top_n if body.use_rerank else body.top_k * 5,
     )
 
-    logger.info(f"ctx and das LLM: {ctx}")
+    # logger.info(f"ctx and das LLM: {ctx}")
 
     # logger.info("Retrieved %d chunks", len(ctx))
 

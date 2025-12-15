@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     OS_SEMANTIC_INDEX: str
     QDRANT_SEMANTIC_COLLECTION: str
 
+    # Sentence-level semantic chunking (LangChain)
+    OS_SEMANTIC_SENTENCE_QWEN3_INDEX: str = "chunks_semantic_sentence_qwen3"
+    QDRANT_SEMANTIC_SENTENCE_QWEN3_COLLECTION: str = "chunks_semantic_sentence_qwen3"
+
     # === Embeddings & Modelle ===
     EMBEDDING_BACKEND: str = "hf"  # options: 'ollama', 'hf'
     EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

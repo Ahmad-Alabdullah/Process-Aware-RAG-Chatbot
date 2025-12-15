@@ -1,0 +1,20 @@
+name: study_gso_step4_qwen25_cot
+baseline: "configs/baseline_gso_qwen3_semantic.yaml"
+
+# GSO Step 4: Combining best findings
+# - Qwen2.5:7b-instruct (better semantic_sim, llm_faithfulness)
+# - CoT prompt (better factual_consistency)
+
+variants:
+  - name: GSO_S4_qwen25_cot
+    override:
+      qa_payload:
+        model: "qwen2.5:7b-instruct"
+        prompt_style: "cot"
+      factors:
+        llm:
+          qa:
+            model: "qwen2.5:7b-instruct"
+            num_ctx: 4096
+        prompt:
+          style: "cot"

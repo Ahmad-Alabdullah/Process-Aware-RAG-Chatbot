@@ -18,6 +18,7 @@ logger = get_logger(__name__)
 class ChunkingStrategy(str, Enum):
     BY_TITLE = "by_title"
     SEMANTIC = "semantic"
+    SENTENCE_SEMANTIC = "sentence_semantic"  # LangChain SemanticChunker
 
 
 ROLE_HINTS = [
@@ -37,6 +38,8 @@ def _get_index_names(strategy: ChunkingStrategy) -> Tuple[str, str]:
     """Gibt (os_index, qdrant_collection) basierend auf Strategie zurück."""
     if strategy == ChunkingStrategy.SEMANTIC:
         return settings.OS_SEMANTIC_INDEX, settings.QDRANT_SEMANTIC_COLLECTION
+    if strategy == ChunkingStrategy.SENTENCE_SEMANTIC:
+        return settings.OS_SEMANTIC_SENTENCE_QWEN3_INDEX, settings.QDRANT_SEMANTIC_SENTENCE_QWEN3_COLLECTION
     return settings.OS_INDEX, settings.QDRANT_COLLECTION
 
 
@@ -268,6 +271,74 @@ def _semantic_chunk(
     return chunks
 
 
+def _langchain_semantic_chunk(
+    full_text: str,
+    max_chunk_chars: int = 2400,
+    breakpoint_threshold_type: str = "percentile",
+    breakpoint_threshold_amount: float = 90.0,
+) -> List[Tuple[str, dict]]:
+    """
+    LangChain SemanticChunker: Sentence-level semantic chunking.
+    
+    Verwendet langchain_experimental.text_splitter.SemanticChunker
+    mit einem Ollama-basierten Embedding-Modell.
+    
+    Args:
+        full_text: Gesamter Dokumenttext
+        max_chunk_chars: Maximale Chunk-Länge (wird nachträglich angewendet)
+        breakpoint_threshold_type: "percentile", "standard_deviation", oder "interquartile"
+        breakpoint_threshold_amount: Threshold-Wert (z.B. 90 für 90. Percentile)
+    
+    Returns:
+        Liste von (text, metadata) Tupeln
+    """
+    from langchain_experimental.text_splitter import SemanticChunker
+    from langchain_ollama import OllamaEmbeddings
+    
+    if not full_text.strip():
+        return []
+    
+    logger.info(
+        f"LangChain Semantic Chunking: threshold={breakpoint_threshold_type}/{breakpoint_threshold_amount}"
+    )
+    
+    # Ollama Embeddings für SemanticChunker
+    embeddings = OllamaEmbeddings(
+        model=settings.OLLAMA_EMBED_MODEL,
+        base_url=settings.OLLAMA_BASE,
+    )
+    
+    # SemanticChunker initialisieren
+    text_splitter = SemanticChunker(
+        embeddings=embeddings,
+        breakpoint_threshold_type=breakpoint_threshold_type,
+        breakpoint_threshold_amount=breakpoint_threshold_amount,
+    )
+    
+    # Text in Chunks splitten
+    docs = text_splitter.create_documents([full_text])
+    
+    # Chunks extrahieren und ggf. aufteilen wenn zu lang
+    chunks: List[Tuple[str, dict]] = []
+    for doc in docs:
+        chunk_text = doc.page_content.strip()
+        
+        if len(chunk_text) < SEMANTIC_MIN_CHUNK_CHARS:
+            continue
+            
+        if len(chunk_text) > max_chunk_chars:
+            # Aufteilen bei max_chunk_chars
+            for i in range(0, len(chunk_text), max_chunk_chars):
+                sub_chunk = chunk_text[i:i + max_chunk_chars].strip()
+                if len(sub_chunk) >= SEMANTIC_MIN_CHUNK_CHARS:
+                    chunks.append((sub_chunk, {"chunking_strategy": "langchain_semantic"}))
+        else:
+            chunks.append((chunk_text, {"chunking_strategy": "langchain_semantic"}))
+    
+    logger.info(f"LangChain Semantic Chunking: {len(docs)} raw chunks → {len(chunks)} final chunks")
+    return chunks
+
+
 def _compute_breakpoints_percentile(similarities: List[float]) -> List[int]:
     """
     Greg Kamradt Methode: Breakpoints bei großen Ähnlichkeits-Sprüngen.
@@ -430,6 +501,40 @@ def parse_pdf(
 
         return _semantic_chunk(elements, max_chunk_chars=max_semantic_chars)
 
+    elif strategy == ChunkingStrategy.SENTENCE_SEMANTIC:
+        # ============================================================
+        # SENTENCE-LEVEL SEMANTIC CHUNKING (LangChain SemanticChunker)
+        # ============================================================
+        logger.info(
+            f"📄 Parsing mit SENTENCE_SEMANTIC Chunking (LangChain + Ollama, max={max_semantic_chars})"
+        )
+
+        # Erst Text extrahieren ohne Chunking
+        elements = partition_pdf(
+            filename=str(path),
+            strategy="hi_res",
+            chunking_strategy=None,
+            languages=settings.OCR_LANGUAGES.split(","),
+            infer_table_structure=True,
+            skip_infer_table_types=[],
+        )
+
+        # Gesamten Text zusammenbauen
+        full_text_parts = []
+        for el in elements:
+            txt = dehyphenize(getattr(el, "text", "") or "")
+            element_type = type(el).__name__
+            if element_type == "Table":
+                html = getattr(getattr(el, "metadata", None), "text_as_html", None)
+                if html:
+                    txt = _table_html_to_text(html) or txt
+            if txt.strip():
+                full_text_parts.append(txt)
+        
+        full_text = "\n\n".join(full_text_parts)
+        
+        return _langchain_semantic_chunk(full_text, max_chunk_chars=max_semantic_chars)
+
     else:
         # ============================================================
         # BY_TITLE CHUNKING (Default)
@@ -494,7 +599,7 @@ def ensure_indices(strategy: ChunkingStrategy = ChunkingStrategy.BY_TITLE):
 
     os_client = get_opensearch()
     if not os_client.indices.exists(index=os_index):
-        if strategy == ChunkingStrategy.SEMANTIC:
+        if strategy == ChunkingStrategy.SEMANTIC or strategy == ChunkingStrategy.SENTENCE_SEMANTIC:
             os_client.indices.create(
                 index=os_index,
                 body={
@@ -706,6 +811,7 @@ async def consume_uploads(r):
 
     ensure_indices(ChunkingStrategy.BY_TITLE)
     ensure_indices(ChunkingStrategy.SEMANTIC)
+    ensure_indices(ChunkingStrategy.SENTENCE_SEMANTIC)
 
     while True:
         # ">" delivers new messages for the consumer group

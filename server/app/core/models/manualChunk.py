@@ -9,4 +9,4 @@ class ManualChunk(BaseModel):
     meta: Dict[str, Any] = {}
     process_name: Optional[str] = None
     tags: Optional[str] = None
-    chunking_strategy: Literal["by_title", "semantic"] = None
+    chunking_strategy: Literal["by_title", "semantic", "sentence_semantic"] = None

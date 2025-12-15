@@ -28,7 +28,7 @@ async def upload_document(
     source: str = Form("manual"),
     tags: str = Form(""),
     process_name: str = Form(""),
-    chunking_strategy: Literal["by_title", "semantic"] = Form("by_title"),
+    chunking_strategy: Literal["by_title", "semantic", "sentence_semantic"] = Form("by_title"),
 ):
     """
     Upload und Verarbeitung von PDF-Dokumenten (async via Redis Stream).
@@ -143,6 +143,7 @@ def index_manual_chunks(chunks: List[ManualChunk]):
 
     ensure_indices(ChunkingStrategy.BY_TITLE)
     ensure_indices(ChunkingStrategy.SEMANTIC)
+    ensure_indices(ChunkingStrategy.SENTENCE_SEMANTIC)
 
     indexed = 0
     for c in chunks:

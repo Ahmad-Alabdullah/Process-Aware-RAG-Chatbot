@@ -1,4 +1,4 @@
-name: study_gso_rerank
+name: study_gso_rerank_20_10
 baseline: "configs/baseline_gso_qwen3_semantic.yaml"
 
 # Ergebniss aus gso top_k: top_k = 5 ist bereits optimal
@@ -7,8 +7,14 @@ baseline: "configs/baseline_gso_qwen3_semantic.yaml"
 
 variants:
   # Reranking aktiviert
-  - name: GSO_S2_rerank_on
+  - name: GSO_S2_rerank_on_20
     override:
       qa_payload:
         use_rerank: True
         rerank_top_n: 20
+
+  - name: GSO_S2_rerank_on_10
+    override:
+      qa_payload:
+        use_rerank: True
+        rerank_top_n: 10

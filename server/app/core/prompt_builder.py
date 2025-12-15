@@ -74,6 +74,7 @@ def build_prompt(
     - fewshot: Mit Beispielen
     - cot: Chain-of-Thought Reasoning
     - structured: Strukturierte Antwort mit Abschnitten
+    - citation_first: Erst zitieren, dann antworten (bessere Faithfulness)
     """
 
     if style == "baseline":
@@ -86,6 +87,8 @@ def build_prompt(
         return _build_cot_prompt(body, context_text, gating_hint)
     elif style == "structured":
         return _build_structured_prompt(body, context_text, gating_hint)
+    elif style == "citation_first":
+        return _build_citation_first_prompt(body, context_text, gating_hint)
     else:
         return _build_baseline_prompt(body, context_text, gating_hint)
 
@@ -307,6 +310,63 @@ Strukturiere deine Antwort wie folgt:
 - Besonderheiten oder Ausnahmen
 
 Antwort:"""
+
+
+# ============================================================
+# CITATION-FIRST PROMPT (Für bessere Faithfulness)
+# ============================================================
+
+
+def _build_citation_first_prompt(
+    body: AskBody,
+    context_text: str,
+    gating_hint: str,
+) -> str:
+    """
+    Citation-First Prompt für verbesserte Faithfulness.
+
+    Basiert auf:
+    - Gao et al. (2023) "Enabling Large Language Models to Generate Text with Citations"
+    - ALCE Benchmark (Attributable to Identified Sources)
+
+    Kernidee: Das LLM soll ERST relevante Zitate extrahieren,
+    DANN eine Antwort formulieren. Dies verhindert Halluzinationen,
+    da jede Aussage direkt an eine Quelle gebunden wird.
+
+    Vorteile:
+    - Höhere factual_consistency (AlignScore)
+    - Bessere citation_precision
+    - Weniger Paraphrasierung → näher am Originaltext
+    """
+    gating_block = _format_gating_block(gating_hint, "citation_first")
+
+    return f"""{SYSTEM_PROMPT_GATING if gating_hint else SYSTEM_PROMPT_DE}
+
+### Relevante Dokumente
+{_format_context_block(context_text)}
+{gating_block}
+
+### Frage
+{body.query}
+
+### Anleitung (Citation-First)
+Beantworte die Frage in ZWEI SCHRITTEN:
+
+**SCHRITT 1: Relevante Zitate extrahieren**
+Identifiziere zunächst die relevanten Passagen aus den Dokumenten.
+Formatiere sie als:
+- [1]: "Exaktes Zitat aus Dokument 1..."
+- [2]: "Exaktes Zitat aus Dokument 2..."
+(Nur Zitate, die direkt zur Beantwortung der Frage beitragen)
+
+**SCHRITT 2: Antwort formulieren**
+Formuliere basierend auf den extrahierten Zitaten eine präzise Antwort.
+Jede Aussage MUSS durch ein Zitat [X] belegt sein.
+
+### Antwort
+**Relevante Zitate:**
+
+**Antwort:**"""
 
 
 # ============================================================

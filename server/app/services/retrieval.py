@@ -225,10 +225,10 @@ def hybrid_search(
 
         logger.info(f"Reranking {len(results)} candidates → top {k}")
         results = rerank(q, results, top_k=k, text_key="text")
-        logger.info(f"Reranking done: {results}")
+        # logger.info(f"Reranking done: {results}")
         
         # GPU-Speicher freigeben für Ollama LLM
-        unload_reranker()
+        # unload_reranker()
     else:
         # fusion onlyy
         results = results[:k]

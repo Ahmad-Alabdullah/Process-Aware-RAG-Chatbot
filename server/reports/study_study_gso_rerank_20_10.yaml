@@ -1,0 +1,27 @@
+baseline: OFAT_chunk_semantic_qwen3
+rankings:
+  factual_consistency_normalized:
+  - name: GSO_S2_rerank_on_20
+    value: 0.5735294117647058
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.5555555555555556
+  - name: GSO_S2_rerank_on_10
+    value: 0.5416666666666666
+  recall@5:
+  - name: GSO_S2_rerank_on_20
+    value: 0.763095238095238
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.7612433862433863
+  - name: GSO_S2_rerank_on_10
+    value: 0.7492063492063492
+  semantic_sim:
+  - name: GSO_S2_rerank_on_10
+    value: 0.8318333457872881
+  - name: GSO_S2_rerank_on_20
+    value: 0.8315697966996667
+  - name: OFAT_chunk_semantic_qwen3
+    value: 0.8306389874827447
+study_name: study_gso_rerank_20_10
+variants:
+- GSO_S2_rerank_on_20
+- GSO_S2_rerank_on_10

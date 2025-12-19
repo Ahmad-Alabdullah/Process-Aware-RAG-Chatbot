@@ -95,6 +95,11 @@ class RunConfig(BaseModel):
             else RerankConfig()
         )
 
+    def get_retrieval_mode(self) -> str:
+        """Extrahiert Retrieval-Modus aus factors.retrieval.mode (H1 Hypothesentest)."""
+        retrieval_cfg = self.factors.get("retrieval", {})
+        return retrieval_cfg.get("mode", "hybrid")  # Default: hybrid
+
     def get_evaluation_config(self) -> EvaluationConfig:
         """Extrahiert Evaluation-Konfiguration aus factors."""
         eval_cfg = self.factors.get("evaluation", {})

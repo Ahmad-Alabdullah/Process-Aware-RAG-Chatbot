@@ -250,12 +250,13 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
     else:
         payload["use_rerank"] = payload.get("use_rerank", False)
 
-    # Query-Parameter für Embedding-Config
+    # Query-Parameter für Embedding-Config und Retrieval-Modus
     query_params = {
         "os_index": os_index,
         "qdrant_collection": qdrant_collection,
         "embedding_backend": emb_cfg.backend,
         "embedding_model": emb_cfg.model,
+        "retrieval_mode": cfg.get_retrieval_mode(),  # H1 Hypothesentest
     }
 
     t0 = asyncio.get_event_loop().time()
@@ -783,8 +784,9 @@ def score(
             "semantic_sim", "rouge_l_recall", "content_f1", "bertscore_f1",
             # Faithfulness
             "citation_recall", "citation_precision",
-            # LLM-Judge (Legacy/Always)
+            # LLM-Judge 
             "factual_consistency_score", "factual_consistency_normalized",
+            "llm_faithfulness", "llm_answer_relevance", "llm_context_relevance",
             # H2 Gating
             "gating_lane_ids_recall", "gating_avg_gating_recall", "gating_avg_gating_precision",
             "h2_error_rate", "h2_structure_violation_rate", "h2_hallucination_rate",
@@ -895,9 +897,9 @@ def study(study_config: str, execute: bool = True, fractional: bool = False):
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT run_name FROM runs 
-                       WHERE run_name LIKE %s 
-                       ORDER BY run_name""",
+                    """SELECT name FROM ragrun.eval_runs 
+                       WHERE name LIKE %s 
+                       ORDER BY name""",
                     (f"{baseline_run_name}_r%",)
                 )
                 found_runs = [row[0] for row in cur.fetchall()]

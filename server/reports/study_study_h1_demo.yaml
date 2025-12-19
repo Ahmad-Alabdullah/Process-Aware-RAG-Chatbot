@@ -1,0 +1,96 @@
+baseline: H1_HYBRID_DEMO
+rankings:
+  factual_consistency_normalized:
+  - name: H1_BM25_ONLY_RERANK
+    value: 0.537037037037037
+  - name: H1_HYBRID_DEMO
+    value: 0.5138888888888888
+  - name: H1_VECTOR_ONLY
+    value: 0.5138888888888888
+  - name: H1_VECTOR_ONLY_RERANK
+    value: 0.5092592592592593
+  - name: H1_BM25_ONLY
+    value: 0.5
+  llm_answer_relevance:
+  - name: H1_VECTOR_ONLY_RERANK
+    value: 0.6388888888888888
+  - name: H1_BM25_ONLY_RERANK
+    value: 0.6342592592592593
+  - name: H1_BM25_ONLY
+    value: 0.6157407407407407
+  - name: H1_HYBRID_DEMO
+    value: 0.6018518518518519
+  - name: H1_VECTOR_ONLY
+    value: 0.5740740740740741
+  llm_context_relevance:
+  - name: H1_VECTOR_ONLY
+    value: 0.5833333333333334
+  - name: H1_HYBRID_DEMO
+    value: 0.5555555555555556
+  - name: H1_VECTOR_ONLY_RERANK
+    value: 0.5277777777777778
+  - name: H1_BM25_ONLY
+    value: 0.5277777777777778
+  - name: H1_BM25_ONLY_RERANK
+    value: 0.5277777777777778
+  llm_faithfulness:
+  - name: H1_VECTOR_ONLY_RERANK
+    value: 0.6296296296296297
+  - name: H1_HYBRID_DEMO
+    value: 0.625
+  - name: H1_VECTOR_ONLY
+    value: 0.6203703703703703
+  - name: H1_BM25_ONLY
+    value: 0.6018518518518519
+  - name: H1_BM25_ONLY_RERANK
+    value: 0.5925925925925926
+  mrr@5:
+  - name: H1_VECTOR_ONLY_RERANK
+    value: 0.9629629629629629
+  - name: H1_BM25_ONLY_RERANK
+    value: 0.9629629629629629
+  - name: H1_HYBRID_DEMO
+    value: 0.9305555555555556
+  - name: H1_VECTOR_ONLY
+    value: 0.9074074074074074
+  - name: H1_BM25_ONLY
+    value: 0.8935185185185185
+  ndcg@5:
+  - name: H1_HYBRID_DEMO
+    value: 0.7886989698615464
+  - name: H1_BM25_ONLY
+    value: 0.7831747058437313
+  - name: H1_VECTOR_ONLY_RERANK
+    value: 0.7812628444376676
+  - name: H1_BM25_ONLY_RERANK
+    value: 0.7812628444376676
+  - name: H1_VECTOR_ONLY
+    value: 0.7700348718263573
+  recall@5:
+  - name: H1_VECTOR_ONLY_RERANK
+    value: 0.763095238095238
+  - name: H1_BM25_ONLY_RERANK
+    value: 0.763095238095238
+  - name: H1_VECTOR_ONLY
+    value: 0.7612433862433863
+  - name: H1_BM25_ONLY
+    value: 0.7607804232804233
+  - name: H1_HYBRID_DEMO
+    value: 0.7330026455026455
+  semantic_sim:
+  - name: H1_VECTOR_ONLY
+    value: 0.8477157611741775
+  - name: H1_VECTOR_ONLY_RERANK
+    value: 0.8467297277147701
+  - name: H1_HYBRID_DEMO
+    value: 0.8464995569841125
+  - name: H1_BM25_ONLY_RERANK
+    value: 0.8413804953602275
+  - name: H1_BM25_ONLY
+    value: 0.8358606366423013
+study_name: study_h1_demo
+variants:
+- H1_VECTOR_ONLY
+- H1_VECTOR_ONLY_RERANK
+- H1_BM25_ONLY
+- H1_BM25_ONLY_RERANK

@@ -13,7 +13,7 @@ def rrf(rank: int, k: Optional[int] = None) -> float:
 
 
 def _terms(field: str, values):
-    """Hilfsfunktion: immer als Liste an `terms` übergeben, auf `.keyword` ausweichen."""
+    """Hilfsfunktion: immer als Liste an `terms` übergeben."""
     if values is None:
         return None
     if not isinstance(values, (list, tuple, set)):
@@ -21,8 +21,7 @@ def _terms(field: str, values):
     values = [v for v in values if v is not None and v != ""]
     if not values:
         return None
-    # exakte Filter über `.keyword`
-    return {"terms": {f"{field}.keyword": list(values)}}
+    return {"terms": {field: list(values)}}
 
 
 def embed_texts_dynamic(
@@ -62,6 +61,8 @@ def hybrid_search(
     q: str,
     k: int,
     *,
+    # Retrieval-Modus für H1 Hypothesentest
+    retrieval_mode: str = "hybrid",  # "hybrid" | "vector_only" | "bm25_only"
     # optionale Filter
     process_name: Optional[str] = None,
     tags: Optional[List[str]] = None,
@@ -78,6 +79,7 @@ def hybrid_search(
     Args:
         q: Query
         k: Anzahl der Ergebnisse
+        retrieval_mode: "hybrid" (BM25+Vector), "vector_only", "bm25_only"
         process_name: Filter nach Prozessname
         tags: Filter nach Tags
         use_rerank: Reranking aktivieren
@@ -90,6 +92,7 @@ def hybrid_search(
     Returns:
         Liste von Chunks mit Scores
     """
+    logger.info(f"Retrieval mode: {retrieval_mode}")
 
     os_client = get_opensearch()
     qd = get_qdrant()
@@ -101,90 +104,105 @@ def hybrid_search(
     # Wenn Reranking aktiv, mehr Kandidaten holen
     fetch_k = rerank_top_n if use_rerank else k * 5
 
-    # ---------- 1) OpenSearch: Volltext + Filter ----------
-    should = [
-        {
-            "multi_match": {
-                "query": q,
-                "fields": [
-                    "text^3",
-                    "meta.process_name^5",
-                    "meta.tags^2",
-                ],
-                "type": "best_fields",
+    os_rrf: Dict[str, float] = {}
+    qd_rrf: Dict[str, float] = {}
+
+    # ---------- 1) OpenSearch: Volltext + Filter (BM25) ----------
+    if retrieval_mode in ("hybrid", "bm25_only"):
+        should = [
+            {
+                "multi_match": {
+                    "query": q,
+                    "fields": [
+                        "text^3",
+                        "meta.process_name^5",
+                        "meta.tags^2",
+                    ],
+                    "type": "best_fields",
+                }
             }
-        }
-    ]
+        ]
 
-    os_filters: List[Dict[str, Any]] = []
+        os_filters: List[Dict[str, Any]] = []
 
-    t = _terms("meta.process_name", process_name)
-    if t:
-        os_filters.append(t)
+        t = _terms("meta.process_name", process_name)
+        if t:
+            os_filters.append(t)
 
-    t = _terms("meta.tags", tags)
-    if t:
-        os_filters.append(t)
+        t = _terms("meta.tags", tags)
+        if t:
+            os_filters.append(t)
 
-    bool_query: Dict[str, Any] = {"should": should}
-    if os_filters:
-        bool_query["filter"] = os_filters
+        bool_query: Dict[str, Any] = {"must": should}  # Changed from "should" to "must" to ensure query matches
+        if os_filters:
+            bool_query["filter"] = os_filters
 
-    os_resp = os_client.search(
-        index=os_idx,
-        body={
-            "size": fetch_k,
-            "query": {"bool": bool_query},
-        },
-    )
+        os_resp = os_client.search(
+            index=os_idx,
+            body={
+                "size": fetch_k,
+                "query": {"bool": bool_query},
+            },
+        )
 
-    os_hits = os_resp["hits"]["hits"]
-    os_rrf = {h["_id"]: rrf(i) for i, h in enumerate(os_hits, start=1)}
+        os_hits = os_resp["hits"]["hits"]
+        os_rrf = {h["_id"]: rrf(i) for i, h in enumerate(os_hits, start=1)}
+        logger.debug(f"BM25 returned {len(os_hits)} hits")
 
     # ---------- 2) Qdrant: Vektor + Payload-Filter ----------
-    from qdrant_client.http.models import Filter, FieldCondition, MatchValue, MatchAny
+    if retrieval_mode in ("hybrid", "vector_only"):
+        from qdrant_client.http.models import Filter, FieldCondition, MatchValue, MatchAny
 
-    must_conditions = []
+        must_conditions = []
 
-    if process_name:
-        must_conditions.append(
-            FieldCondition(key="process_name", match=MatchValue(value=process_name))
-        )
-    if tags:
-        if isinstance(tags, str):
-            tags_list = [tags]
-        else:
-            tags_list = list(tags)
-
-        must_conditions.append(
-            FieldCondition(
-                key="tags",
-                match=MatchAny(any=tags_list),
+        if process_name:
+            must_conditions.append(
+                FieldCondition(key="process_name", match=MatchValue(value=process_name))
             )
+        if tags:
+            if isinstance(tags, str):
+                tags_list = [tags]
+            else:
+                tags_list = list(tags)
+
+            must_conditions.append(
+                FieldCondition(
+                    key="tags",
+                    match=MatchAny(any=tags_list),
+                )
+            )
+
+        qfilter = Filter(must=must_conditions) if must_conditions else None
+
+        # Dynamisches Embedding
+        vec = embed_texts_dynamic([q], backend=embedding_backend, model=embedding_model)[0]
+
+        qd_hits = qd.search(
+            collection_name=qd_col,
+            query_vector=vec,
+            limit=fetch_k,
+            query_filter=qfilter,
+            with_payload=True,
         )
 
-    qfilter = Filter(must=must_conditions) if must_conditions else None
+        for i, p in enumerate(qd_hits, start=1):
+            cid = (p.payload or {}).get("chunk_id") or str(p.id)
+            qd_rrf[cid] = rrf(i)
+        logger.debug(f"Vector returned {len(qd_hits)} hits")
 
-    # Dynamisches Embedding
-    vec = embed_texts_dynamic([q], backend=embedding_backend, model=embedding_model)[0]
-
-    qd_hits = qd.search(
-        collection_name=qd_col,
-        query_vector=vec,
-        limit=fetch_k,
-        query_filter=qfilter,
-        with_payload=True,
-    )
-
-    qd_rrf: Dict[str, float] = {}
-    for i, p in enumerate(qd_hits, start=1):
-        cid = (p.payload or {}).get("chunk_id") or str(p.id)
-        qd_rrf[cid] = rrf(i)
-
-    # ---------- 3) Fusion ----------
-    fused = os_rrf.copy()
-    for cid, s in qd_rrf.items():
-        fused[cid] = fused.get(cid, 0.0) + s
+    # ---------- 3) Fusion oder Single-Source ----------
+    if retrieval_mode == "hybrid":
+        # RRF Fusion von beiden Quellen
+        fused = os_rrf.copy()
+        for cid, s in qd_rrf.items():
+            fused[cid] = fused.get(cid, 0.0) + s
+        source_label = "rrf"
+    elif retrieval_mode == "vector_only":
+        fused = qd_rrf
+        source_label = "vector"
+    else:  # bm25_only
+        fused = os_rrf
+        source_label = "bm25"
 
     candidate_k = rerank_top_n if use_rerank else k
     top_ids = [
@@ -212,7 +230,7 @@ def hybrid_search(
                     "page_number": meta.get("page_number"),
                     "section_title": meta.get("section_title"),
                     "rrf_score": fused.get(d["_id"], 0.0),
-                    "source": "rrf",
+                    "source": source_label,  # Dynamisch je nach Modus
                 }
 
         for cid in top_ids:
@@ -230,7 +248,7 @@ def hybrid_search(
         # GPU-Speicher freigeben für Ollama LLM
         # unload_reranker()
     else:
-        # fusion onlyy
+        # fusion only
         results = results[:k]
 
     # Rank-Feld hinzufügen

@@ -205,14 +205,22 @@ def generate_synthetic_testset(
         (SingleHopSpecificQuerySynthesizer(llm=generator_llm), 0.30),   # 30% Single-Hop einfach
     ]
     
-    # Adapt prompts für Deutsch
+    # Adapt prompts für Deutsch (optional - manche Modelle unterstützen das nicht)
     logger.info("Adapting prompts for German language...")
     async def adapt_prompts_async():
         for query, _ in distribution:
-            prompts = await query.adapt_prompts("german", llm=generator_llm)
-            query.set_prompts(**prompts)
+            try:
+                prompts = await query.adapt_prompts("german", llm=generator_llm)
+                query.set_prompts(**prompts)
+            except Exception as e:
+                logger.warning(f"Prompt adaptation failed for {type(query).__name__}: {e}")
+                logger.warning("Falling back to llm_context for German output")
     
-    asyncio.run(adapt_prompts_async())
+    try:
+        asyncio.run(adapt_prompts_async())
+    except Exception as e:
+        logger.warning(f"Prompt adaptation skipped due to error: {e}")
+        logger.warning("Using llm_context for German instructions instead")
     
     logger.info(f"Generating {num_samples} synthetic Q&A pairs (with skip-on-error)...")
     
@@ -386,7 +394,7 @@ def export_to_jsonl(
 @app.callback(invoke_without_command=True)
 def generate(
     num_samples: int = typer.Option(10, help="Anzahl der zu generierenden Samples"),
-    generator_model: str = typer.Option("qwen3:8b", help="LLM für Generierung"),
+    generator_model: str = typer.Option("gemma3:12b-it-q4_K_M", help="LLM für Generierung"),
     embedding_model: str = typer.Option("qwen3-embedding:4b", help="Embedding Modell"),
     index_name: str = typer.Option("chunks_semantic_qwen3", help="OpenSearch Index"),
     output_prefix: str = typer.Option("synthetic", help="Prefix für Output-Dateien"),
@@ -396,6 +404,9 @@ def generate(
     """
     logger.info("=" * 60)
     logger.info("SYNTHETIC DATA GENERATION")
+    logger.info(f"Using LLM: {generator_model}")
+    logger.info(f"Using Embedding Model: {embedding_model}")
+    logger.info(f"Using Index: {index_name}")
     logger.info("=" * 60)
     
     # 1. Load chunks

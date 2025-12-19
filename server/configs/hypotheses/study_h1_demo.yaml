@@ -1,0 +1,72 @@
+# H1 Hypothesentest: Retrieval-Modi Vergleich
+# ============================================
+# Baseline: Hybrid-Retrieval (BM25 + Vector + RRF)
+# Varianten: Vector-Only, BM25-Only
+# ============================================
+
+baseline: "configs/hypotheses/h1_hybrid_demo.yaml"
+repeats: 3
+
+description: |
+  H1: Hybrid-Retrieval (BM25+Embeddings mit RRF) erhöht die Evidenz-
+  und Antwortqualität gegenüber VectorOnly und BM25-only.
+
+variants:
+  # --- Vector-Only Varianten ---
+  - name: "H1_VECTOR_ONLY"
+    override: 
+      factors:
+        retrieval:
+          mode: "vector_only"
+    description: "Nur Dense/Semantic Vector Search (Qdrant)"
+
+  - name: "H1_VECTOR_ONLY_RERANK"
+    override: 
+      qa_payload:
+        use_rerank: true
+        rerank_top_n: 50
+      factors:
+        retrieval:
+          mode: "vector_only"
+        rerank:
+          enabled: true
+    description: "Vector-Only + Cross-Encoder Reranking"
+
+  # --- BM25-Only Varianten ---
+  - name: "H1_BM25_ONLY"
+    override: 
+      factors:
+        retrieval:
+          mode: "bm25_only"
+    description: "Nur Lexical/Keyword Search (OpenSearch BM25)"
+
+  - name: "H1_BM25_ONLY_RERANK"
+    override: 
+      qa_payload:
+        use_rerank: true
+        rerank_top_n: 50
+      factors:
+        retrieval:
+          mode: "bm25_only"
+        rerank:
+          enabled: true
+    description: "BM25-Only + Cross-Encoder Reranking"
+
+# Metriken für Vergleich
+metrics:
+  primary:
+    - recall@5
+    - ndcg@5
+    - mrr@5
+    - factual_consistency_normalized
+    - llm_answer_relevance
+    - llm_context_relevance
+    - llm_faithfulness
+    - semantic_sim
+  
+  secondary:
+    - recall@3
+    - recall@10
+    - bertscore_f1
+    - content_f1
+    - citation_recall

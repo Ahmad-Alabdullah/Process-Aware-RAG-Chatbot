@@ -26,6 +26,10 @@ def ask(
     ),
     embedding_backend: Optional[str] = Query(None, description="'ollama' oder 'hf'"),
     embedding_model: Optional[str] = Query(None, description="Embedding Modellname"),
+    # H1 Hypothesentest: Retrieval-Modus
+    retrieval_mode: Optional[str] = Query(
+        "hybrid", description="'hybrid' | 'vector_only' | 'bm25_only'"
+    ),
     # LLM-Parameter (optional für Experimente)
     temperature: Optional[float] = Query(
         None, ge=0.0, le=2.0, description="Temperature Override (default: 0.1 für QA)"
@@ -94,6 +98,7 @@ def ask(
     ctx = hybrid_search(
         retrieval_query,  # Use HyDE-transformed query or original
         body.top_k,
+        retrieval_mode=retrieval_mode or "hybrid",  # H1 Hypothesentest
         process_name=body.process_name,
         tags=body.tags or None,
         use_rerank=body.use_rerank,
@@ -104,6 +109,9 @@ def ask(
         embedding_backend=embedding_backend or settings.EMBEDDING_BACKEND,
         embedding_model=embedding_model or settings.EMBEDDING_MODEL,
     )
+    
+    # DEBUG: Log retrieval mode and context for BM25 investigation
+    logger.info(f"DEBUG: retrieval_mode={retrieval_mode}, ctx_count={len(ctx)}")
 
     t2 = time_module.perf_counter()
     logger.info(
@@ -168,6 +176,7 @@ def ask(
         "used_model": body.model,
         "used_hyde": body.use_hyde,
         "used_rerank": body.use_rerank,
+        "used_retrieval_mode": retrieval_mode or "hybrid",  # H1 Tracking
         "used_temperature": llm_config.temperature,
         "top_k": body.top_k,
         "embedding_config": {

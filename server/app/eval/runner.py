@@ -257,6 +257,7 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
         "embedding_backend": emb_cfg.backend,
         "embedding_model": emb_cfg.model,
         "retrieval_mode": cfg.get_retrieval_mode(),  # H1 Hypothesentest
+        "llm_backend": cfg.get_llm_config("qa").backend,  # vLLM Support
     }
 
     t0 = asyncio.get_event_loop().time()

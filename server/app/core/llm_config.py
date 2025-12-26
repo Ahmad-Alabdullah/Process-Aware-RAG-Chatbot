@@ -66,7 +66,27 @@ class LLMConfig(BaseModel):
     repeat_penalty: float = Field(
         default=1.1,
         ge=1.0,
-        description="Wiederholungsstrafe",
+        description="Wiederholungsstrafe (Ollama)",
+    )
+
+    # Backend-Auswahl
+    backend: str = Field(
+        default="ollama",
+        description="LLM Backend: 'ollama' oder 'vllm'",
+    )
+
+    # vLLM-spezifische Parameter (OpenAI-kompatibel)
+    presence_penalty: float = Field(
+        default=0.0,
+        ge=-2.0,
+        le=2.0,
+        description="vLLM: Presence penalty für Wiederholungen",
+    )
+    frequency_penalty: float = Field(
+        default=0.0,
+        ge=-2.0,
+        le=2.0,
+        description="vLLM: Frequency penalty",
     )
 
 

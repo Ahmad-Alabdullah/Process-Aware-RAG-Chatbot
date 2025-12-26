@@ -96,13 +96,49 @@ services:
     volumes:
       - "ollama:/root/.ollama"
     environment:
-      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_NUM_PARALLEL=2
       - OLLAMA_FLASH_ATTENTION=1
     deploy:
       resources:
         reservations:
           devices:
             - capabilities: ["gpu"]
+
+  # # vLLM - High-performance LLM inference with OpenAI-compatible API
+  # # Vorteile: Continuous Batching, PagedAttention, bessere Skalierung
+  # vllm:
+  #   image: vllm/vllm-openai:latest
+  #   container_name: vllm
+  #   ports:
+  #     - "8001:8000"
+  #   volumes:
+  #     - "vllm_models:/root/.cache/huggingface"
+  #   environment:
+  #     - HF_TOKEN=${HF_TOKEN:-}
+  #     - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+  #   command: >
+  #     --model Qwen/Qwen2.5-7B-Instruct-AWQ
+  #     --quantization awq_marlin
+  #     --host 0.0.0.0
+  #     --port 8000
+  #     --max-model-len 8192
+  #     --gpu-memory-utilization 0.60
+  #     --enable-prefix-caching
+  #     --dtype auto
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - capabilities: ["gpu"]
+  #             count: 1
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 180s
+  #   profiles:
+  #     - vllm  # Nur starten mit: docker compose --profile vllm up
 
 volumes:
   pgdata: {}
@@ -112,3 +148,4 @@ volumes:
   uploads: {}
   ollama: {}
   pgadmin_data: {}
+ # vllm_models: {}

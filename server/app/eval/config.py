@@ -10,6 +10,7 @@ class LLMTaskConfig(BaseModel):
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, ge=1)
     num_ctx: int = Field(default=8192, ge=512)
+    backend: str = Field(default="ollama", description="'ollama' oder 'vllm'")
 
 
 class LLMFactorsConfig(BaseModel):

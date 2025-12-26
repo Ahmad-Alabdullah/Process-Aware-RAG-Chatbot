@@ -1,0 +1,43 @@
+# Study: Q4_0 vs Q4_K_M Quantization Comparison
+# Testet ob Q4_0 bei ähnlicher Qualität weniger VRAM braucht
+
+baseline: "configs/enhanced_baseline.yaml"
+
+description: |
+  Quantization Comparison Study
+  
+  Vergleicht Q4_0 Quantisierung gegen die Enhanced Baseline (Q4_K_M).
+  Ziel: Prüfen ob die ~300MB VRAM-Ersparnis die Qualitätseinbußen wert sind.
+  
+  Erwartungen:
+  - Q4_0: ~4.4GB vs Q4_K_M: ~4.7GB (7% kleiner)
+  - Möglicherweise leicht schlechtere Antwortqualität
+  - Gleiche Inference-Geschwindigkeit
+
+variants:
+  # Q4_0 Quantisierung
+  - name: "Q4_0_quantization"
+    override: 
+      qa_payload: 
+        model: "qwen2.5:7b-instruct-q4_0"
+      factors:
+        llm:
+          qa:
+            model: "qwen2.5:7b-instruct-q4_0"
+            temperature: 0.1
+            num_ctx: 8192
+    description: "Q4_0 Quantisierung (4.4GB, einfachere 4-bit)"
+
+# Metriken für Vergleich
+metrics:
+  primary:
+    - recall@5
+    - ndcg@5
+    - factual_consistency_normalized
+    - llm_answer_relevance
+    - llm_faithfulness
+    - semantic_sim
+  
+  secondary:
+    - bertscore_f1
+    - content_f1

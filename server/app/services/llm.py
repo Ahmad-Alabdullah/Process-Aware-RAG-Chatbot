@@ -63,6 +63,93 @@ def ollama_generate(
     return response.strip()
 
 
+def vllm_generate(
+    prompt: str,
+    config: Optional[LLMConfig] = None,
+) -> str:
+    """
+    Generiert Antwort via vLLM (OpenAI-kompatible API).
+
+    Vorteile gegenüber Ollama:
+    - Continuous Batching für parallele Anfragen
+    - PagedAttention für effizientes KV-Cache Management
+    - Bessere Skalierung bei hoher Last
+
+    Args:
+        prompt: Der Prompt
+        config: LLMConfig mit allen Parametern
+
+    Returns:
+        Generierte Antwort als String
+    """
+    # Default-Config falls nicht angegeben
+    if config is None:
+        config = LLMPresets.rag_qa(settings.VLLM_MODEL)
+
+    # vLLM OpenAI-kompatibler Request
+    payload = {
+        "model": config.model,
+        "prompt": prompt,
+        "max_tokens": config.max_tokens,
+        "temperature": config.temperature,
+        "top_p": config.top_p if config.top_p is not None else 1.0,
+        "presence_penalty": config.presence_penalty,
+        "frequency_penalty": config.frequency_penalty,
+        "stop": None,
+    }
+
+    resp = requests.post(
+        f"{settings.VLLM_BASE}/v1/completions",
+        json=payload,
+        timeout=180,  # vLLM kann bei großen Modellen länger brauchen
+        headers={"Content-Type": "application/json"},
+    )
+    resp.raise_for_status()
+
+    result = resp.json()
+    response = result.get("choices", [{}])[0].get("text", "")
+
+    # CoT-Postprocessing: Entferne <think>-Tags
+    if "<think>" in response:
+        response = extract_answer_from_cot(response)
+
+    return response.strip()
+
+
+def generate(
+    prompt: str,
+    config: Optional[LLMConfig] = None,
+    backend: Optional[str] = None,
+) -> str:
+    """
+    Unified LLM-Generierung mit dynamischer Backend-Auswahl.
+
+    Wählt automatisch das richtige Backend basierend auf:
+    1. Explizitem backend-Parameter
+    2. config.backend (falls gesetzt)
+    3. settings.LLM_BACKEND (Default)
+
+    Args:
+        prompt: Der Input-Prompt
+        config: LLMConfig mit allen Parametern
+        backend: Override für Backend ('ollama' oder 'vllm')
+
+    Returns:
+        Generierte Antwort als String
+    """
+    # Backend-Bestimmung mit Fallback-Hierarchie
+    effective_backend = backend
+    if effective_backend is None and config is not None:
+        effective_backend = config.backend
+    if effective_backend is None:
+        effective_backend = settings.LLM_BACKEND
+
+    if effective_backend == "vllm":
+        return vllm_generate(prompt, config)
+    else:
+        return ollama_generate(prompt, config)
+
+
 def hyde_rewrite(query: str, model: Optional[str] = None) -> str:
     """
     HyDE: Hypothetical Document Embeddings.

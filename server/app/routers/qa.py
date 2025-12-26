@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from app.core.models.askModel import AskBody
 from app.core.prompt_builder import build_prompt
 from app.services.retrieval import hybrid_search
-from app.services.llm import ollama_generate, hyde_rewrite
+from app.services.llm import generate, hyde_rewrite
 from app.services.gating import compute_gating, GatingMode
 from app.core.clients import get_logger
 from app.core.config import settings
@@ -33,6 +33,10 @@ def ask(
     # LLM-Parameter (optional für Experimente)
     temperature: Optional[float] = Query(
         None, ge=0.0, le=2.0, description="Temperature Override (default: 0.1 für QA)"
+    ),
+    # LLM-Backend Auswahl
+    llm_backend: Optional[str] = Query(
+        None, description="'ollama' oder 'vllm' (default: settings.LLM_BACKEND)"
     ),
 ):
     """
@@ -153,7 +157,7 @@ def ask(
     if temperature is not None:
         llm_config.temperature = temperature
 
-    answer = ollama_generate(prompt, config=llm_config)
+    answer = generate(prompt, config=llm_config, backend=llm_backend)
 
     t4 = time_module.perf_counter()
     logger.info(
@@ -178,6 +182,7 @@ def ask(
         "used_rerank": body.use_rerank,
         "used_retrieval_mode": retrieval_mode or "hybrid",  # H1 Tracking
         "used_temperature": llm_config.temperature,
+        "used_llm_backend": llm_backend or settings.LLM_BACKEND,
         "top_k": body.top_k,
         "embedding_config": {
             "backend": embedding_backend or settings.EMBEDDING_BACKEND,

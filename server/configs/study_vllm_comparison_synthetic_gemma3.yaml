@@ -1,0 +1,45 @@
+baseline: "configs/enhanced_baseline_synthetic_gemma3.yaml"
+
+description: |
+  vLLM Backend Comparison Study (Synthetic Gemma3 Dataset)
+  
+  Vergleicht vLLM (mit Qwen2.5-7B-AWQ) gegen die Enhanced Baseline (Ollama + Qwen2.5:7b)
+  auf dem Synthetic Gemma3 Datensatz.
+  
+  Dataset: synthetic_gemma3 (Gemma-generierte Queries, weniger Modell-Bias als Qwen-generierte)
+  
+  Erwartungen:
+  - Schnellere Inferenz durch vLLM Continuous Batching
+
+variants:
+  # vLLM mit Qwen2.5-7B-AWQ
+  - name: "VLLM_SYNTHETIC_GEMMA3_qwen2.5_7b_awq"
+    override: 
+      qa_payload: 
+        model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+      factors:
+        llm:
+          qa:
+            model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+            backend: "vllm"
+            num_ctx: 8192
+    description: "vLLM Backend mit Qwen2.5-7B (AWQ quantisiert) auf Synthetic Gemma3"
+
+# Metriken für Vergleich
+metrics:
+  primary:
+    - recall@5
+    - ndcg@5
+    - factual_consistency_normalized
+    - llm_answer_relevance
+    - llm_context_relevance
+    - llm_faithfulness
+    - semantic_sim
+  
+  secondary:
+    - recall@3
+    - recall@10
+    - mrr@5
+    - bertscore_f1
+    - content_f1
+    - citation_recall

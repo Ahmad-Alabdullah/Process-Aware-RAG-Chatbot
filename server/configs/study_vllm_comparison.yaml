@@ -1,0 +1,56 @@
+baseline: "configs/enhanced_baseline.yaml"
+
+description: |
+  vLLM Backend Comparison Study
+  
+  Vergleicht vLLM (mit Qwen2.5-7B-Instruct-AWQ) gegen die Enhanced Baseline (Ollama + Qwen2.5:7b).
+  Alle anderen Faktoren bleiben identisch, um den reinen Backend/Modell-Unterschied zu messen.
+  
+  Erwartungen:
+  - Schnellere Inferenz durch vLLM Continuous Batching
+
+variants:
+  # vLLM mit Qwen2.5-7B-Instruct-AWQ
+  - name: "VLLM_qwen2.5_7b_awq"
+    override: 
+      qa_payload: 
+        model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+      factors:
+        llm:
+          qa:
+            model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+            backend: "vllm"
+            num_ctx: 8192
+    description: "vLLM Backend mit Qwen2.5-7B (AWQ quantisiert)"
+
+  # Optional: vLLM mit kleinerem Modell für fairen Größenvergleich
+  # - name: "VLLM_qwen2.5_7b"
+  #   override: 
+  #     qa_payload: 
+  #       model: "Qwen/Qwen2.5-7B-Instruct"
+  #     factors:
+  #       llm:
+  #         qa:
+  #           model: "Qwen/Qwen2.5-7B-Instruct"
+  #           backend: "vllm"
+  #           num_ctx: 8192
+  #   description: "vLLM mit gleichem Modell (Qwen2.5-7B) für reinen Backend-Vergleich"
+
+# Metriken für Vergleich
+metrics:
+  primary:
+    - recall@5
+    - ndcg@5
+    - factual_consistency_normalized
+    - llm_answer_relevance
+    - llm_context_relevance
+    - llm_faithfulness
+    - semantic_sim
+  
+  secondary:
+    - recall@3
+    - recall@10
+    - mrr@5
+    - bertscore_f1
+    - content_f1
+    - citation_recall

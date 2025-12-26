@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     OLLAMA_EMBED_MODEL: str = "qwen3-embedding:4b"
     OLLAMA_MODEL: str
 
+    # === vLLM Backend ===
+    VLLM_BASE: str = "http://vllm:8001"
+    VLLM_MODEL: str = "Qwen/Qwen3-8B-AWQ"
+    LLM_BACKEND: str = "ollama"  # options: 'ollama', 'vllm'
+
     # === Retrieval ===
     TOP_K: int
     RRF_K: int
@@ -74,6 +79,7 @@ class Settings(BaseSettings):
             self.QDRANT_URL = "http://localhost:6333"
             self.NEO4J_URL = "bolt://localhost:7687"
             self.OLLAMA_BASE = "http://localhost:11434"
+            self.VLLM_BASE = "http://localhost:8001"
         else:
             self.REDIS_URL = self.REDIS_URL or "redis://redis:6379"
             self.DATABASE_URL = (

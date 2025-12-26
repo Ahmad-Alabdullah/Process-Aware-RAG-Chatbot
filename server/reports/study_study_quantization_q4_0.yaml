@@ -1,0 +1,35 @@
+baseline: ENHANCED_BASELINE
+rankings:
+  factual_consistency_normalized:
+  - name: ENHANCED_BASELINE
+    value: 0.5185185185185185
+  - name: Q4_0_quantization
+    value: 0.5
+  llm_answer_relevance:
+  - name: ENHANCED_BASELINE
+    value: 0.6435185185185185
+  - name: Q4_0_quantization
+    value: 0.5694444444444444
+  llm_faithfulness:
+  - name: ENHANCED_BASELINE
+    value: 0.6435185185185185
+  - name: Q4_0_quantization
+    value: 0.5555555555555556
+  ndcg@5:
+  - name: Q4_0_quantization
+    value: 0.7886989698615464
+  - name: ENHANCED_BASELINE
+    value: 0.7700348718263573
+  recall@5:
+  - name: ENHANCED_BASELINE
+    value: 0.7612433862433863
+  - name: Q4_0_quantization
+    value: 0.7330026455026455
+  semantic_sim:
+  - name: Q4_0_quantization
+    value: 0.8593750467837024
+  - name: ENHANCED_BASELINE
+    value: 0.8471993103350637
+study_name: study_quantization_q4_0
+variants:
+- Q4_0_quantization

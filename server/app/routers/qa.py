@@ -1,11 +1,13 @@
 import time as time_module
-from typing import Optional
+import json
+from typing import Optional, Generator
 from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
 
 from app.core.models.askModel import AskBody
 from app.core.prompt_builder import build_prompt
 from app.services.retrieval import hybrid_search
-from app.services.llm import generate, hyde_rewrite
+from app.services.llm import generate, hyde_rewrite, ollama_generate_stream
 from app.services.gating import compute_gating, GatingMode
 from app.core.clients import get_logger
 from app.core.config import settings
@@ -20,12 +22,12 @@ logger = get_logger(__name__)
 def ask(
     body: AskBody,
     # Optionale Overrides für Evaluation
-    os_index: Optional[str] = Query(None, description="OpenSearch Index Override"),
+    os_index: Optional[str] = Query("chunks_semantic_qwen3", description="OpenSearch Index Override"),
     qdrant_collection: Optional[str] = Query(
-        None, description="Qdrant Collection Override"
+        "chunks_semantic_qwen3", description="Qdrant Collection Override"
     ),
-    embedding_backend: Optional[str] = Query(None, description="'ollama' oder 'hf'"),
-    embedding_model: Optional[str] = Query(None, description="Embedding Modellname"),
+    embedding_backend: Optional[str] = Query("ollama", description="'ollama' oder 'hf'"),
+    embedding_model: Optional[str] = Query("qwen3-embedding:4b", description="Embedding Modellname"),
     # H1 Hypothesentest: Retrieval-Modus
     retrieval_mode: Optional[str] = Query(
         "hybrid", description="'hybrid' | 'vector_only' | 'bm25_only'"
@@ -111,7 +113,7 @@ def ask(
         os_index=os_index,
         qdrant_collection=qdrant_collection,
         embedding_backend=embedding_backend or settings.EMBEDDING_BACKEND,
-        embedding_model=embedding_model or settings.EMBEDDING_MODEL,
+        embedding_model=embedding_model or settings.OLLAMA_EMBED_MODEL,
     )
     
     # DEBUG: Log retrieval mode and context for BM25 investigation
@@ -217,3 +219,128 @@ def ask(
         }
 
     return response
+
+
+@router.post("/ask/stream")
+def ask_stream(
+    body: AskBody,
+    os_index: Optional[str] = Query("chunks_semantic_qwen3"),
+    qdrant_collection: Optional[str] = Query("chunks_semantic_qwen3"),
+    embedding_backend: Optional[str] = Query("ollama"),
+    embedding_model: Optional[str] = Query("qwen3-embedding:4b"),
+    retrieval_mode: Optional[str] = Query("hybrid"),
+    temperature: Optional[float] = Query(None, ge=0.0, le=2.0),
+):
+    """
+    Streaming QA Endpoint mit Server-Sent Events.
+
+    Sendet zuerst Metadata (context, gating_mode, etc.) als JSON,
+    dann die komplette LLM-Antwort als ein Event.
+
+    Event-Format:
+    - event: metadata, data: {...}
+    - event: answer, data: "..."
+    - event: done, data: {}
+    """
+    logger.info("QA /ask/stream: query=%s", body.query[:50] if body.query else "")
+
+    # 1) Gating berechnen
+    gating = compute_gating(
+        process_name=body.process_name,
+        process_id=body.process_id,
+        definition_id=body.definition_id,
+        current_node_id=body.current_node_id,
+        roles=body.roles or [],
+        force_process_context=body.force_process_context,
+    )
+
+    # 2) Optional HyDE
+    search_input = body.query
+    if body.use_hyde:
+        search_input = hyde_rewrite(body.query, model=body.model)
+
+    # 3) Retrieval (same pattern as regular /ask endpoint)
+    chunks = hybrid_search(
+        search_input,  # positional: query
+        body.top_k,    # positional: top_k
+        retrieval_mode=retrieval_mode or "hybrid",
+        process_name=body.process_name,
+        tags=body.tags or None,
+        use_rerank=body.use_rerank,
+        rerank_top_n=body.rerank_top_n,
+        os_index=os_index,
+        qdrant_collection=qdrant_collection,
+        embedding_backend=embedding_backend or settings.EMBEDDING_BACKEND,
+        embedding_model=embedding_model or settings.OLLAMA_EMBED_MODEL,
+    )
+
+    ctx = [
+        {
+            "chunk_id": c["chunk_id"],
+            "text": c["text"][:300],
+            "score": round(c.get("rrf_score", 0), 4) if c.get("rrf_score") else None,
+            "rerank_score": round(c.get("rerank_score", 0), 4) if c.get("rerank_score") else None,
+            "metadata": {
+                "process_name": c.get("process_name"),
+                "tags": c.get("tags"),
+                "page_number": c.get("page_number"),
+                "section_title": c.get("section_title"),
+                # Filename with fallback: file_name (from meta) > document_id > process fallback
+                "filename": c.get("file_name") or (
+                    f"Dokument zu {c.get('process_name')}" if c.get("process_name")
+                    else "Unbekanntes Dokument"
+                ),
+                "title": c.get("title") or c.get("section_title"),
+            },
+        }
+        for c in chunks
+    ]
+    context_text = "\n\n---\n\n".join(c["text"] for c in chunks)
+
+    # 4) Prompt
+    prompt = build_prompt(
+        style=body.prompt_style,
+        body=body,
+        context_text=context_text,
+        gating_hint=gating.prompt_hint,
+    )
+
+    # 5) LLM Config (same pattern as regular /ask endpoint)
+    if body.prompt_style == "cot":
+        llm_config = LLMPresets.chain_of_thought(model=body.model or settings.OLLAMA_MODEL)
+    else:
+        llm_config = LLMPresets.rag_qa(model=body.model or settings.OLLAMA_MODEL)
+
+    # Temperature Override falls angegeben
+    if temperature is not None:
+        llm_config.temperature = temperature
+
+    # Generator für SSE - Token-by-Token Streaming
+    def generate_events() -> Generator[str, None, None]:
+        # Sende Metadata zuerst
+        metadata = {
+            "context": ctx,
+            "gating_mode": gating.mode.value,
+            "gating_hint": gating.prompt_hint,
+            "gating_metadata": gating.metadata,
+            "used_model": body.model,
+            "used_hyde": body.use_hyde,
+            "used_rerank": body.use_rerank,
+        }
+        yield f"event: metadata\ndata: {json.dumps(metadata)}\n\n"
+
+        # Streame LLM-Antwort Token für Token
+        for token in ollama_generate_stream(prompt, config=llm_config):
+            yield f"event: token\ndata: {json.dumps(token)}\n\n"
+
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+

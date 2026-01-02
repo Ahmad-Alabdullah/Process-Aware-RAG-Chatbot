@@ -225,10 +225,12 @@ def hybrid_search(
                     "chunk_id": d["_id"],
                     "text": src.get("text", ""),
                     "document_id": src.get("document_id"),
+                    "file_name": meta.get("file_name"),  # from meta.file_name
                     "process_name": meta.get("process_name"),
                     "tags": meta.get("tags"),
                     "page_number": meta.get("page_number"),
                     "section_title": meta.get("section_title"),
+                    "title": meta.get("title") or meta.get("section_title"),
                     "rrf_score": fused.get(d["_id"], 0.0),
                     "source": source_label,  # Dynamisch je nach Modus
                 }

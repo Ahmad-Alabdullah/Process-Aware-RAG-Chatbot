@@ -50,7 +50,7 @@ class AskBody(BaseModel):
     )
 
     # Prompt-Konfiguration
-    prompt_style: str = Field(default="baseline", description="Prompt-Style")
+    prompt_style: str = Field(default="cot", description="Prompt-Style")
 
     # Debug
     debug_return: bool = Field(

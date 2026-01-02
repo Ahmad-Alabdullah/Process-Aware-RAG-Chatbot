@@ -63,6 +63,64 @@ def ollama_generate(
     return response.strip()
 
 
+def ollama_generate_stream(
+    prompt: str,
+    config: Optional[LLMConfig] = None,
+):
+    """
+    Generiert Antwort via Ollama mit Streaming.
+
+    Args:
+        prompt: Der Prompt
+        config: LLMConfig mit allen Parametern
+
+    Yields:
+        Text-Chunks als Strings
+    """
+    # Default-Config falls nicht angegeben
+    if config is None:
+        config = LLMPresets.rag_qa(settings.OLLAMA_MODEL)
+
+    # Ollama-Request
+    options = {
+        "num_ctx": config.num_ctx,
+        "temperature": config.temperature,
+        "num_predict": config.max_tokens,
+        "repeat_penalty": config.repeat_penalty,
+    }
+
+    # Optionale Parameter
+    if config.top_p is not None:
+        options["top_p"] = config.top_p
+    if config.top_k is not None:
+        options["top_k"] = config.top_k
+
+    resp = requests.post(
+        f"{settings.OLLAMA_BASE}/api/generate",
+        json={
+            "model": config.model,
+            "prompt": prompt,
+            "stream": True,
+            "options": options,
+        },
+        timeout=180,
+        stream=True,
+    )
+    resp.raise_for_status()
+    
+    import json
+    for line in resp.iter_lines():
+        if line:
+            try:
+                chunk = json.loads(line)
+                if "response" in chunk:
+                    yield chunk["response"]
+                if chunk.get("done", False):
+                    break
+            except json.JSONDecodeError:
+                continue
+
+
 def vllm_generate(
     prompt: str,
     config: Optional[LLMConfig] = None,

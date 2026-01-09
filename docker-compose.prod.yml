@@ -1,0 +1,275 @@
+# ============================================
+# NeuralPath RAG Chatbot - Production Stack
+# ============================================
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  # ============================================
+  # Cloudflare Tunnel - Secure External Access
+  # ============================================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - frontend
+    depends_on:
+      - client
+      - api
+
+  # ============================================
+  # Watchtower - Auto-update containers from ghcr.io
+  # ============================================
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.docker/config.json:/config.json:ro
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=300  # Check every 5 minutes
+      - WATCHTOWER_INCLUDE_STOPPED=false
+      - WATCHTOWER_LABEL_ENABLE=true  # Only update labeled containers
+    command: --interval 300
+
+  # ============================================
+  # Traefik - Internal Reverse Proxy
+  # ============================================
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.insecure=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - frontend
+
+  # ============================================
+  # Frontend - Next.js Client
+  # ============================================
+  client:
+    image: ghcr.io/ahmad-alabdullah/process-aware-rag-chatbot-client:latest
+    container_name: neurapath-client
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.client.rule=Host(`neurapath.de`) || Host(`www.neurapath.de`)"
+      - "traefik.http.routers.client.entrypoints=web"
+      - "traefik.http.services.client.loadbalancer.server.port=3000"
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - NEXT_PUBLIC_API_URL=https://api.neurapath.de
+    networks:
+      - frontend
+    depends_on:
+      - api
+
+  # ============================================
+  # Backend - FastAPI
+  # ============================================
+  api:
+    image: ghcr.io/ahmad-alabdullah/process-aware-rag-chatbot-backend:latest
+    container_name: neurapath-api
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`api.neurapath.de`)"
+      - "traefik.http.routers.api.entrypoints=web"
+      - "traefik.http.services.api.loadbalancer.server.port=8080"
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/proto
+      - REDIS_URL=redis://redis:6379
+      - OPENSEARCH_HOST=opensearch
+      - OPENSEARCH_PORT=9200
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - uploads:/data/uploads
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - postgres
+      - redis
+      - opensearch
+      - qdrant
+      - neo4j
+      - ollama
+
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: neurapath-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: proto
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./server/db/init:/docker-entrypoint-initdb.d
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Redis Cache
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: neurapath-redis
+    restart: unless-stopped
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # OpenSearch - Full-text Search
+  # ============================================
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: neurapath-opensearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - osdata:/usr/share/opensearch/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================
+  # Qdrant - Vector Database
+  # ============================================
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    container_name: neurapath-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant:/qdrant/storage
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================
+  # Neo4j - Graph Database
+  # ============================================
+  neo4j:
+    image: neo4j:5-community
+    container_name: neurapath-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+    volumes:
+      - neo4j:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:7474 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================
+  # Ollama - Local LLM Inference with GPU
+  # ============================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: neurapath-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_FLASH_ATTENTION=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+
+# ============================================
+# Persistent Volumes (same as dev for data preservation)
+# ============================================
+volumes:
+  pgdata:
+    name: server_pgdata
+    external: true
+  osdata:
+    name: server_osdata
+    external: true
+  qdrant:
+    name: server_qdrant
+    external: true
+  neo4j:
+    name: server_neo4j
+    external: true
+  ollama:
+    name: server_ollama
+    external: true
+  uploads:

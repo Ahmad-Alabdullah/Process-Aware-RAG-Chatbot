@@ -575,6 +575,9 @@ def parse_pdf(
 
 
 # --- Embeddings backend ---
+import threading
+_embedding_lock = threading.Lock()  # Serialize GPU inference for thread-safety
+
 _model = (
     SentenceTransformer(settings.EMBEDDING_MODEL)
     if settings.EMBEDDING_BACKEND == "hf"
@@ -584,7 +587,9 @@ _model = (
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
     if settings.EMBEDDING_BACKEND == "hf":
-        return _model.encode(texts, normalize_embeddings=True).tolist()
+        # Serialize GPU inference to prevent CUDA race conditions
+        with _embedding_lock:
+            return _model.encode(texts, normalize_embeddings=True).tolist()
     resp = requests.post(
         f"{settings.OLLAMA_BASE}/api/embed",
         json={"model": settings.OLLAMA_EMBED_MODEL, "input": texts},

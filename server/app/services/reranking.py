@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 
 _reranker_model = None
 _reranker_lock = threading.Lock()
+_compute_lock = threading.Lock()  # Serialize GPU inference to prevent CUDA race conditions
 
 
 def _get_reranker():
@@ -108,8 +109,10 @@ def rerank(
         # Query-Document Paare erstellen
         pairs = [[query, doc.get(text_key, "")] for doc in documents]
         
-        # FlagReranker.compute_score() gibt Liste von Scores zurück
-        scores = model.compute_score(pairs, normalize=True)
+        # FlagReranker.compute_score() is not thread-safe on GPU
+        # Serialize inference calls to prevent CUDA race conditions
+        with _compute_lock:
+            scores = model.compute_score(pairs, normalize=True)
         
         # Falls nur ein Dokument, ist scores ein Float statt Liste
         if isinstance(scores, (int, float)):

@@ -24,6 +24,9 @@ def _terms(field: str, values):
     return {"terms": {field: list(values)}}
 
 
+import threading
+_embed_dynamic_lock = threading.Lock()  # Serialize GPU inference
+
 def embed_texts_dynamic(
     texts: List[str],
     backend: str = "hf",
@@ -44,7 +47,9 @@ def embed_texts_dynamic(
         from sentence_transformers import SentenceTransformer
 
         _model = SentenceTransformer(model)
-        return _model.encode(texts, normalize_embeddings=True).tolist()
+        # Serialize GPU inference to prevent CUDA race conditions
+        with _embed_dynamic_lock:
+            return _model.encode(texts, normalize_embeddings=True).tolist()
     else:
         import requests
 

@@ -282,6 +282,7 @@ def semantic_similarity(
 import threading
 _bertscore_models = {}
 _bertscore_lock = threading.Lock()
+_bertscore_compute_lock = threading.Lock()  # Serialize GPU inference
 
 
 def _get_bertscore(model: str = "deepset/gbert-large"):
@@ -336,7 +337,9 @@ def bert_score(
         }
 
     try:
-        P, R, F1 = scorer.score([pred], [gold])
+        # Serialize GPU inference to prevent CUDA race conditions
+        with _bertscore_compute_lock:
+            P, R, F1 = scorer.score([pred], [gold])
         return {
             "bertscore_precision": float(P[0]),
             "bertscore_recall": float(R[0]),

@@ -52,12 +52,12 @@ try {
     # Pull latest images if requested
     if ($Pull) {
         Write-Host "`nPulling latest images..." -ForegroundColor Yellow
-        docker compose -f docker-compose.prod.yml --env-file .env.production pull
+        docker compose -f docker-compose.prod.yml --env-file .\.env.production pull
     }
 
     # Start the stack
     Write-Host "`nStarting containers..." -ForegroundColor Yellow
-    docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+    docker compose -f docker-compose.prod.yml --env-file .\.env.production up -d
 
     Write-Host "`n" + "="*50 -ForegroundColor Green
     Write-Host "Stack started successfully!" -ForegroundColor Green

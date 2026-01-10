@@ -21,6 +21,10 @@ router = APIRouter()
 
 UPLOAD_DIR = Path("/server/data/tmp_uploads")
 
+# Security: File upload constraints
+ALLOWED_EXTENSIONS = {".pdf"}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
 
 @router.post("/upload")
 async def upload_document(
@@ -34,7 +38,7 @@ async def upload_document(
     Upload und Verarbeitung von PDF-Dokumenten (async via Redis Stream).
 
     Args:
-        file: Die hochzuladende PDF-Datei
+        file: Die hochzuladende PDF-Datei (nur .pdf, max 50MB)
         source: Quelle des Dokuments
         tags: Komma-separierte Tags
         process_name: Zugehöriger Prozessname
@@ -42,13 +46,32 @@ async def upload_document(
             - "by_title": Standard-Chunking nach Überschriften (1800 chars)
             - "semantic": Semantisches Chunking mit bge-m3 (Percentile 95%)
     """
+    # Security: Validate file extension
+    if file.filename:
+        ext = Path(file.filename).suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type '{ext}'. Only {ALLOWED_EXTENSIONS} allowed."
+            )
+    else:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    # Security: Validate file size
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024*1024)}MB"
+        )
+    await file.seek(0)  # Reset for processing
+
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     doc_id = str(uuid.uuid4())
     dst = os.path.join(UPLOAD_DIR, f"{doc_id}-{file.filename}")
 
     async with aiofiles.open(dst, "wb") as out:
-        while chunk := await file.read(1024 * 1024):
-            await out.write(chunk)
+        await out.write(contents)
 
     r = get_redis()
     await r.xadd(

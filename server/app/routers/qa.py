@@ -1,8 +1,10 @@
 import time as time_module
 import json
 from typing import Optional, Generator
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.models.askModel import AskBody
 from app.core.prompt_builder import build_prompt
@@ -17,9 +19,14 @@ router = APIRouter(prefix="/api/qa")
 
 logger = get_logger(__name__)
 
+# Rate limiter for expensive LLM endpoints
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("/ask")
+@limiter.limit("20/minute")
 def ask(
+    request: Request,  # Required for rate limiter
     body: AskBody,
     # Optionale Overrides für Evaluation
     os_index: Optional[str] = Query("chunks_semantic_qwen3", description="OpenSearch Index Override"),
@@ -222,7 +229,9 @@ def ask(
 
 
 @router.post("/ask/stream")
+@limiter.limit("20/minute")
 def ask_stream(
+    request: Request,  # Required for rate limiter
     body: AskBody,
     os_index: Optional[str] = Query("chunks_semantic_qwen3"),
     qdrant_collection: Optional[str] = Query("chunks_semantic_qwen3"),

@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     OCR_LANGUAGES: str
     MAX_SEMANTIC_CHARACTERS: int
 
+    # === CORS ===
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # === Security ===
+    API_KEY: str = ""  # Set in .env.production to enable authentication
+
     # === Pydantic Settings Config ===
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

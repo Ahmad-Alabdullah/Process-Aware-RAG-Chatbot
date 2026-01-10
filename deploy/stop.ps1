@@ -24,9 +24,9 @@ try {
             Write-Host "Aborted." -ForegroundColor Yellow
             exit 0
         }
-        docker compose -f docker-compose.prod.yml --env-file .env.production down -v
+        docker compose -f docker-compose.prod.yml --env-file .\.env.production down -v
     } else {
-        docker compose -f docker-compose.prod.yml --env-file .env.production down
+        docker compose -f docker-compose.prod.yml --env-file .\.env.production down
     }
 
     Write-Host "`n✓ Stack stopped successfully" -ForegroundColor Green

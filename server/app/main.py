@@ -1,15 +1,22 @@
 from contextlib import asynccontextmanager
 import contextlib
 import asyncio, os
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
 from app.core.clients import get_redis, setup_logging
+from app.core.auth import verify_api_key
 from app.services.pipeline import consume_uploads
 from app.routers import ingestion, search, qa, bpmn, whitelist
 
 setup_logging(level="INFO")
+
+# Rate limiting setup
+limiter = Limiter(key_func=get_remote_address)
 
 tags_metadata = [
     {"name": "ingestion", "description": "Dokumente hochladen & verwalten"},
@@ -53,21 +60,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Parse CORS origins from settings (comma-separated string)
+cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-API-Key"],
 )
 
-app.include_router(ingestion.router, tags=[tags_metadata[0]["name"]])
-app.include_router(search.router, tags=[tags_metadata[1]["name"]])
-app.include_router(qa.router, tags=[tags_metadata[2]["name"]])
-app.include_router(whitelist.router, tags=[tags_metadata[3]["name"]])
-app.include_router(bpmn.router, tags=[tags_metadata[4]["name"]])
+# Include routers with API key authentication dependency
+api_key_dependency = [Depends(verify_api_key)]
+
+app.include_router(ingestion.router, tags=[tags_metadata[0]["name"]], dependencies=api_key_dependency)
+app.include_router(search.router, tags=[tags_metadata[1]["name"]], dependencies=api_key_dependency)
+app.include_router(qa.router, tags=[tags_metadata[2]["name"]], dependencies=api_key_dependency)
+app.include_router(whitelist.router, tags=[tags_metadata[3]["name"]], dependencies=api_key_dependency)
+app.include_router(bpmn.router, tags=[tags_metadata[4]["name"]], dependencies=api_key_dependency)
 
 
 @app.get("/health")
 def health():
+    """Health check endpoint - no authentication required."""
     return {"status": "ok"}

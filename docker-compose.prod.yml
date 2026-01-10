@@ -71,9 +71,12 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
       - NEXT_PUBLIC_API_URL=https://api.neurapath.de
-      - NEXT_PUBLIC_API_KEY=${API_KEY}
+      # Server-side only env vars for secure API proxy (not exposed to client bundle)
+      - BACKEND_URL=http://api:8080
+      - API_KEY=${API_KEY}
     networks:
       - frontend
+      - backend  # Need access to api service for server-side proxy
     depends_on:
       - api
 

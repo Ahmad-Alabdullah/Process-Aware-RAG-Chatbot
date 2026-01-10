@@ -1,17 +1,12 @@
 import { API_BASE_URL } from "./client";
 import type { AskRequest, EvidenceChunk } from "@/types";
 
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
-
-function getStreamHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (API_KEY) {
-    headers["X-API-Key"] = API_KEY;
-  }
-  return headers;
-}
+/**
+ * Streaming API Client
+ * 
+ * SECURITY: API key is handled server-side in /api/proxy route
+ * and never exposed to the client-side JavaScript bundle.
+ */
 
 interface StreamMetadata {
   context: EvidenceChunk[];
@@ -39,7 +34,7 @@ export async function askQuestionStream(
 ): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/api/qa/ask/stream`, {
     method: "POST",
-    headers: getStreamHeaders(),
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
   });
 

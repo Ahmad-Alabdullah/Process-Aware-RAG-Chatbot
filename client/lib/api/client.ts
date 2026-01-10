@@ -1,7 +1,16 @@
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+/**
+ * API Client - Routes all requests through the secure proxy
+ * 
+ * SECURITY: API key is handled server-side in /api/proxy route
+ * and never exposed to the client-side JavaScript bundle.
+ */
 
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+// Use proxy route for all API calls (API key handled server-side)
+const API_BASE_URL = "/api/proxy";
+
+// Export for backwards compatibility - but now points to proxy
+export const API_BACKEND_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface FetchOptions extends RequestInit {
   retries?: number;
@@ -21,16 +30,6 @@ class ApiError extends Error {
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (API_KEY) {
-    headers["X-API-Key"] = API_KEY;
-  }
-  return headers;
 }
 
 async function fetchWithRetry(
@@ -76,7 +75,7 @@ export const apiClient = {
   async get<T>(endpoint: string, options?: FetchOptions): Promise<T> {
     const response = await fetchWithRetry(`${API_BASE_URL}${endpoint}`, {
       method: "GET",
-      headers: getHeaders(),
+      headers: { "Content-Type": "application/json" },
       ...options,
     });
     return response.json();
@@ -89,7 +88,7 @@ export const apiClient = {
   ): Promise<T> {
     const response = await fetchWithRetry(`${API_BASE_URL}${endpoint}`, {
       method: "POST",
-      headers: getHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       ...options,
     });
@@ -99,7 +98,7 @@ export const apiClient = {
   async delete<T>(endpoint: string, options?: FetchOptions): Promise<T> {
     const response = await fetchWithRetry(`${API_BASE_URL}${endpoint}`, {
       method: "DELETE",
-      headers: getHeaders(),
+      headers: { "Content-Type": "application/json" },
       ...options,
     });
     return response.json();
@@ -107,4 +106,3 @@ export const apiClient = {
 };
 
 export { ApiError, API_BASE_URL };
-

@@ -10,6 +10,7 @@ Modell: BAAI/bge-reranker-v2-m3
 
 from __future__ import annotations
 from typing import List, Dict, Any
+import threading
 import torch
 
 from app.core.clients import get_logger
@@ -17,29 +18,35 @@ from app.core.clients import get_logger
 logger = get_logger(__name__)
 
 _reranker_model = None
+_reranker_lock = threading.Lock()
 
 
 def _get_reranker():
-    """Lazy Loading des BGE Reranker v2-m3 Modells."""
+    """Lazy Loading des BGE Reranker v2-m3 Modells (Thread-safe)."""
     global _reranker_model
+    
+    # Double-checked locking pattern for thread safety
     if _reranker_model is None:
-        try:
-            from FlagEmbedding import FlagReranker
+        with _reranker_lock:
+            # Check again inside lock
+            if _reranker_model is None:
+                try:
+                    from FlagEmbedding import FlagReranker
 
-            model_name = "BAAI/bge-reranker-v2-m3"
-            use_fp16 = torch.cuda.is_available()
+                    model_name = "BAAI/bge-reranker-v2-m3"
+                    use_fp16 = torch.cuda.is_available()
 
-            _reranker_model = {
-                "model": FlagReranker(
-                    model_name,
-                    use_fp16=use_fp16,
-                ),
-                "device": "cuda" if torch.cuda.is_available() else "cpu",
-            }
-            logger.info(f"BGE Reranker v2-m3 geladen (fp16={use_fp16})")
-        except Exception as e:
-            logger.error(f"BGE Reranker v2-m3 konnte nicht geladen werden: {e}")
-            return None
+                    _reranker_model = {
+                        "model": FlagReranker(
+                            model_name,
+                            use_fp16=use_fp16,
+                        ),
+                        "device": "cuda" if torch.cuda.is_available() else "cpu",
+                    }
+                    logger.info(f"BGE Reranker v2-m3 geladen (fp16={use_fp16})")
+                except Exception as e:
+                    logger.error(f"BGE Reranker v2-m3 konnte nicht geladen werden: {e}")
+                    return None
     return _reranker_model
 
 

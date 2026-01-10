@@ -279,34 +279,39 @@ def semantic_similarity(
 # BERTSCORE
 # ============================================================
 
+import threading
 _bertscore_models = {}
+_bertscore_lock = threading.Lock()
 
 
 def _get_bertscore(model: str = "deepset/gbert-large"):
-    """Lazy Loading von BERTScore mit konfiguriertem Modell."""
+    """Lazy Loading von BERTScore mit konfiguriertem Modell (Thread-safe)."""
     global _bertscore_models
 
     if model not in _bertscore_models:
-        try:
-            from bert_score import BERTScorer
-            import torch
+        with _bertscore_lock:
+            # Double-check inside lock
+            if model not in _bertscore_models:
+                try:
+                    from bert_score import BERTScorer
+                    import torch
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            # num_layers basierend auf Modell
-            num_layers = 17 if "large" in model.lower() else 9
+                    # num_layers basierend auf Modell
+                    num_layers = 17 if "large" in model.lower() else 9
 
-            _bertscore_models[model] = BERTScorer(
-                model_type=model,
-                lang="de",
-                num_layers=num_layers,
-                rescale_with_baseline=False,  # No baseline available for gbert-large
-                device=device,
-            )
-            logger.info(f"BERTScore geladen (model={model}, device={device})")
-        except Exception as e:
-            logger.warning(f"BERTScore init Fehler: {e}")
-            return None
+                    _bertscore_models[model] = BERTScorer(
+                        model_type=model,
+                        lang="de",
+                        num_layers=num_layers,
+                        rescale_with_baseline=False,  # No baseline available for gbert-large
+                        device=device,
+                    )
+                    logger.info(f"BERTScore geladen (model={model}, device={device})")
+                except Exception as e:
+                    logger.warning(f"BERTScore init Fehler: {e}")
+                    return None
 
     return _bertscore_models.get(model)
 

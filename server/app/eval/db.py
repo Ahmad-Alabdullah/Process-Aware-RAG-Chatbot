@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os, pathlib
+import threading
 from typing import Optional, Iterable, Dict, List, Any
 from psycopg_pool import ConnectionPool
 from psycopg.types.json import Json
@@ -10,14 +11,18 @@ from app.core.config import settings
 
 DEFAULT_DSN = settings.DATABASE_URL
 _pool: Optional[ConnectionPool] = None
+_pool_lock = threading.Lock()
 
 
 def get_pool(dsn: Optional[str] = None) -> ConnectionPool:
+    """Thread-safe connection pool initialization."""
     global _pool
     if _pool is None:
-        _pool = ConnectionPool(
-            dsn or DEFAULT_DSN, min_size=1, max_size=10, max_idle=300
-        )
+        with _pool_lock:
+            if _pool is None:
+                _pool = ConnectionPool(
+                    dsn or DEFAULT_DSN, min_size=1, max_size=10, max_idle=300
+                )
     return _pool
 
 

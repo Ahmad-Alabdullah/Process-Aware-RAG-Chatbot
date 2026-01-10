@@ -218,11 +218,14 @@ def compute_gating(
         result.prompt_hint = _build_overview_hint(result)
         result.metadata = {
             "context_type": "overview",
-            "num_lanes": len(result.overview.all_lanes) if result.overview else 0,
-            "num_steps": len(result.overview.all_steps) if result.overview else 0,
-            "num_decisions": (
-                len(result.overview.key_decisions) if result.overview else 0
-            ),
+            "num_lanes": len(result.overview.lanes_with_tasks) if result.overview else 0,
+            "num_decisions": len(result.overview.gateways) if result.overview else 0,
+            "num_steps": (
+                sum(len(l.get("nodes", [])) for l in result.overview.lanes_with_tasks)
+                + len(result.overview.nodes_without_lane)
+            )
+            if result.overview
+            else 0,
         }
         return result
 

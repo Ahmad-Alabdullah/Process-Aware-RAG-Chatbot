@@ -38,23 +38,27 @@ services:
     command: --interval 300
 
   # ============================================
-  # Traefik - Internal Reverse Proxy
+  # Traefik - Internal Reverse Proxy (DISABLED)
   # ============================================
-  traefik:
-    image: traefik:latest
-    container_name: traefik
-    restart: unless-stopped
-    command:
-      - "--api.insecure=false"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-    ports:
-      - "80:80"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - frontend
+  # NOTE: Traefik is not needed when using Cloudflare Tunnel with direct routing.
+  # Cloudflare routes directly to neurapath-client:3000 and neurapath-api:8080.
+  # This avoids known issues with Traefik Docker provider on Windows/WSL2.
+  # 
+  # traefik:
+  #   image: traefik:latest
+  #   container_name: traefik
+  #   restart: unless-stopped
+  #   command:
+  #     - "--api.insecure=false"
+  #     - "--providers.docker=true"
+  #     - "--providers.docker.exposedbydefault=false"
+  #     - "--entrypoints.web.address=:80"
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #   networks:
+  #     - frontend
 
   # ============================================
   # Frontend - Next.js Client
@@ -64,10 +68,7 @@ services:
     container_name: neurapath-client
     restart: unless-stopped
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.client.rule=Host(`neurapath.de`) || Host(`www.neurapath.de`)"
-      - "traefik.http.routers.client.entrypoints=web"
-      - "traefik.http.services.client.loadbalancer.server.port=3000"
+      # Traefik labels removed - using direct Cloudflare Tunnel routing
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
       - NEXT_PUBLIC_API_URL=https://api.neurapath.de
@@ -88,10 +89,7 @@ services:
     container_name: neurapath-api
     restart: unless-stopped
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.api.rule=Host(`api.neurapath.de`)"
-      - "traefik.http.routers.api.entrypoints=web"
-      - "traefik.http.services.api.loadbalancer.server.port=8080"
+      # Traefik labels removed - using direct Cloudflare Tunnel routing
       - "com.centurylinklabs.watchtower.enable=true"
     env_file:
       - .env.production

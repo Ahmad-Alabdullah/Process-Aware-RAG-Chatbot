@@ -120,9 +120,9 @@ def rerank(
             doc_copy["source"] = "ce"
             ranked_docs.append(doc_copy)
 
+        top_scores = ", ".join(f"{d['rerank_score']:.3f}" for d in ranked_docs[:3])
         logger.debug(
-            f"Reranking: {len(documents)} docs → top {top_k}, "
-            f"scores: [{', '.join(f'{d['rerank_score']:.3f}' for d in ranked_docs[:3])}]"
+            f"Reranking: {len(documents)} docs → top {top_k}, scores: [{top_scores}]"
         )
         
         return ranked_docs

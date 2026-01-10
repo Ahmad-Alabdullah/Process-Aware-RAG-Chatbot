@@ -41,7 +41,7 @@ services:
   # Traefik - Internal Reverse Proxy
   # ============================================
   traefik:
-    image: traefik:v3.0
+    image: traefik:latest
     container_name: traefik
     restart: unless-stopped
     command:
@@ -109,6 +109,13 @@ services:
     networks:
       - frontend
       - backend
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       - postgres
       - redis

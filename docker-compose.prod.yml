@@ -158,10 +158,11 @@ services:
   # OpenSearch - Full-text Search
   # ============================================
   opensearch:
-    image: opensearchproject/opensearch:2.11.0
+    image: opensearchproject/opensearch:latest
     container_name: neurapath-opensearch
     restart: unless-stopped
     environment:
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_ADMIN_PASSWORD}
       - discovery.type=single-node
       - plugins.security.disabled=true
       - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g

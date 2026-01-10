@@ -65,7 +65,7 @@ try {
 
     # Show status
     Write-Host "`nContainer Status:" -ForegroundColor Cyan
-    docker compose -f docker-compose.prod.yml ps
+    docker compose -f docker-compose.prod.yml --env-file .\.env.production ps
 
     Write-Host @"
 
@@ -75,9 +75,9 @@ Access Points:
   - External:       https://neurapath.de (after Cloudflare setup)
 
 Useful commands:
-  - View logs:      docker compose -f docker-compose.prod.yml logs -f
-  - Stop stack:     docker compose -f docker-compose.prod.yml down
-  - Restart:        docker compose -f docker-compose.prod.yml restart
+  - View logs:      docker compose -f docker-compose.prod.yml --env-file .env.production logs -f
+  - Stop stack:     docker compose -f docker-compose.prod.yml --env-file .env.production down
+  - Restart:        docker compose -f docker-compose.prod.yml --env-file .env.production restart
 
 "@ -ForegroundColor White
 

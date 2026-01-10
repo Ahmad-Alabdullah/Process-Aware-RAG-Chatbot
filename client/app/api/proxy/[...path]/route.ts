@@ -64,17 +64,23 @@ async function proxyRequest(
   } catch (error) {
     console.error("Proxy error:", error);
     return NextResponse.json(
-      { error: "Failed to connect to backend" },
+      { error: "Failed to connect to backend", details: String(error) },
       { status: 502 }
     );
   }
 }
 
+// Helper to extract path from params (handles both sync and async params)
+async function getPath(params: { path: string[] } | Promise<{ path: string[] }>): Promise<string[]> {
+  const resolved = await Promise.resolve(params);
+  return resolved.path;
+}
+
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  context: { params: { path: string[] } | Promise<{ path: string[] }> }
 ) {
-  const { path } = await params;
+  const path = await getPath(context.params);
   const fullPath = "/" + path.join("/");
   const searchParams = request.nextUrl.searchParams.toString();
   const pathWithQuery = searchParams ? `${fullPath}?${searchParams}` : fullPath;
@@ -84,9 +90,9 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  context: { params: { path: string[] } | Promise<{ path: string[] }> }
 ) {
-  const { path } = await params;
+  const path = await getPath(context.params);
   const fullPath = "/" + path.join("/");
   
   return proxyRequest(request, fullPath, "POST");
@@ -94,9 +100,9 @@ export async function POST(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  context: { params: { path: string[] } | Promise<{ path: string[] }> }
 ) {
-  const { path } = await params;
+  const path = await getPath(context.params);
   const fullPath = "/" + path.join("/");
   
   return proxyRequest(request, fullPath, "PUT");
@@ -104,9 +110,9 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  context: { params: { path: string[] } | Promise<{ path: string[] }> }
 ) {
-  const { path } = await params;
+  const path = await getPath(context.params);
   const fullPath = "/" + path.join("/");
   
   return proxyRequest(request, fullPath, "DELETE");

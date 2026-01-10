@@ -1,6 +1,18 @@
 import { API_BASE_URL } from "./client";
 import type { AskRequest, EvidenceChunk } from "@/types";
 
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
+function getStreamHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (API_KEY) {
+    headers["X-API-Key"] = API_KEY;
+  }
+  return headers;
+}
+
 interface StreamMetadata {
   context: EvidenceChunk[];
   gating_mode: string;
@@ -27,7 +39,7 @@ export async function askQuestionStream(
 ): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/api/qa/ask/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getStreamHeaders(),
     body: JSON.stringify(request),
   });
 

@@ -1,6 +1,8 @@
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
 interface FetchOptions extends RequestInit {
   retries?: number;
   retryDelay?: number;
@@ -19,6 +21,16 @@ class ApiError extends Error {
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (API_KEY) {
+    headers["X-API-Key"] = API_KEY;
+  }
+  return headers;
 }
 
 async function fetchWithRetry(
@@ -64,7 +76,7 @@ export const apiClient = {
   async get<T>(endpoint: string, options?: FetchOptions): Promise<T> {
     const response = await fetchWithRetry(`${API_BASE_URL}${endpoint}`, {
       method: "GET",
-      headers: { "Content-Type": "application/json" },
+      headers: getHeaders(),
       ...options,
     });
     return response.json();
@@ -77,7 +89,7 @@ export const apiClient = {
   ): Promise<T> {
     const response = await fetchWithRetry(`${API_BASE_URL}${endpoint}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getHeaders(),
       body: JSON.stringify(body),
       ...options,
     });
@@ -87,7 +99,7 @@ export const apiClient = {
   async delete<T>(endpoint: string, options?: FetchOptions): Promise<T> {
     const response = await fetchWithRetry(`${API_BASE_URL}${endpoint}`, {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers: getHeaders(),
       ...options,
     });
     return response.json();
@@ -95,3 +107,4 @@ export const apiClient = {
 };
 
 export { ApiError, API_BASE_URL };
+

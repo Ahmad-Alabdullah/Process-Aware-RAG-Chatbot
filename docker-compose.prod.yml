@@ -71,6 +71,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
       - NEXT_PUBLIC_API_URL=https://api.neurapath.de
+      - NEXT_PUBLIC_API_KEY=${API_KEY}
     networks:
       - frontend
     depends_on:

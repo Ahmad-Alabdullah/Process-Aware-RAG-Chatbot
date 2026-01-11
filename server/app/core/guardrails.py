@@ -76,9 +76,9 @@ GREETING_PATTERNS = [
 ]
 
 CHITCHAT_PATTERNS = [
-    "wie geht", "wie gehts", "wie gehts dir", "was machst du",
-    "wer bist du", "wie heißt du", "was kannst du", "was bist du",
-    "erzähl mir was", "langweilig", "lustig",
+    "wie geht", "wie gehts", "wie gehts dir", "wie steht es", "wie stehts",
+    "was machst du", "wer bist du", "wie heißt du", "was kannst du", "was bist du",
+    "erzähl mir was", "langweilig", "lustig", "alles klar", "na",
 ]
 
 # Process-Keywords für schnelle positive Klassifikation
@@ -107,6 +107,9 @@ def classify_query(query: str) -> Tuple[QueryIntent, float]:
     1. Pattern-Matching für offensichtliche Fälle (0ms, 95%+ der Queries)
     2. LLM-Klassifikation nur für ambige Fälle (100-200ms, 5% der Queries)
     
+    WICHTIG: Process-Keywords werden ZUERST geprüft, um False Positives zu vermeiden.
+    Z.B. "Hallo, ich möchte über Elterngeld wissen" → PROCESS_RELATED (nicht GREETING)
+    
     Args:
         query: Die Benutzeranfrage
         
@@ -116,45 +119,48 @@ def classify_query(query: str) -> Tuple[QueryIntent, float]:
     query_lower = query.lower().strip()
     query_len = len(query_lower)
     
-    # Sehr kurze Queries (< 5 Zeichen) ohne Prozess-Keywords sind oft Greetings
-    if query_len < 5:
-        for pattern in GREETING_PATTERNS:
-            if query_lower == pattern or query_lower.startswith(pattern):
-                logger.debug(f"Query '{query}' classified as GREETING (pattern match)")
-                return QueryIntent.GREETING, 0.95
-        # Zu kurz und unklar
-        return QueryIntent.UNCLEAR, 0.8
-    
-    # Greeting-Pattern Check (für kurze Queries)
-    if query_len < 25:
-        for pattern in GREETING_PATTERNS:
-            if query_lower == pattern or query_lower.startswith(pattern + " ") or query_lower.startswith(pattern + "!"):
-                logger.debug(f"Query '{query}' classified as GREETING (pattern)")
-                return QueryIntent.GREETING, 0.95
-    
-    # Chitchat-Pattern Check
-    for pattern in CHITCHAT_PATTERNS:
-        if pattern in query_lower:
-            logger.debug(f"Query '{query}' classified as CHITCHAT (pattern)")
-            return QueryIntent.CHITCHAT, 0.9
-    
-    # Process-Keyword Check (positive Klassifikation für RAG)
+    # 1) ZUERST: Process-Keyword Check (höchste Priorität)
+    # Damit "Hallo, ich möchte über Elterngeld wissen" als PROCESS erkannt wird
     for keyword in PROCESS_KEYWORDS:
         if keyword in query_lower:
             logger.debug(f"Query '{query}' classified as PROCESS_RELATED (keyword: {keyword})")
             return QueryIntent.PROCESS_RELATED, 0.95
     
-    # Frage-Wörter deuten auf echte Frage hin
+    # 2) Sehr kurze Queries (< 5 Zeichen) ohne Keywords sind oft Greetings
+    if query_len < 5:
+        for pattern in GREETING_PATTERNS:
+            if query_lower == pattern or query_lower.startswith(pattern):
+                logger.debug(f"Query '{query}' classified as GREETING (short pattern)")
+                return QueryIntent.GREETING, 0.95
+        return QueryIntent.UNCLEAR, 0.8
+    
+    # 3) "Pure" Greeting Check - nur wenn Query kurz und NUR Greeting enthält
+    if query_len < 30:
+        for pattern in GREETING_PATTERNS:
+            # Exakte Matches oder Greeting am Anfang mit wenig danach
+            if query_lower == pattern or query_lower == pattern + "!":
+                logger.debug(f"Query '{query}' classified as GREETING (exact)")
+                return QueryIntent.GREETING, 0.95
+            # Greeting + kurzer Rest ohne Fragezeichen
+            if query_lower.startswith(pattern) and "?" not in query_lower and query_len < 15:
+                logger.debug(f"Query '{query}' classified as GREETING (short)")
+                return QueryIntent.GREETING, 0.9
+    
+    # 4) Chitchat-Pattern Check
+    for pattern in CHITCHAT_PATTERNS:
+        if pattern in query_lower:
+            logger.debug(f"Query '{query}' classified as CHITCHAT (pattern)")
+            return QueryIntent.CHITCHAT, 0.9
+    
+    # 5) Frage-Wörter deuten auf echte Frage hin
     question_starters = ["was ", "wie ", "wer ", "wann ", "wo ", "warum ", "welche", "können ", "muss ", "darf "]
     has_question = any(query_lower.startswith(q) or f" {q}" in query_lower for q in question_starters)
     
     if has_question and query_len > 15:
-        # Längere Frage ohne Off-Topic Signale → wahrscheinlich process-related
         logger.debug(f"Query '{query}' classified as PROCESS_RELATED (question heuristic)")
         return QueryIntent.PROCESS_RELATED, 0.7
     
-    # Für ambige Fälle: LLM-Klassifikation mit schnellem Modell
-    # Nur wenn Pattern-Matching unsicher ist (keine Keywords, keine klaren Patterns)
+    # 6) Für ambige Fälle: LLM-Klassifikation mit schnellem Modell
     logger.debug(f"Query '{query}' ambiguous, using LLM classification")
     return classify_query_with_llm(query)
 

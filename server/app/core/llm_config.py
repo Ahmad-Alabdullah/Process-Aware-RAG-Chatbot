@@ -178,3 +178,21 @@ class LLMPresets:
             max_tokens=1024,
             num_ctx=8192,
         )
+
+    @staticmethod
+    def fast_classification(model: str = "qwen2.5:1.5b-instruct") -> LLMConfig:
+        """
+        Für schnelle Query-Klassifikation (Guardrails).
+
+        Verwendet qwen2.5:1.5b-instruct für minimale Latenz (~100-200ms).
+        Temperature=0.0: Deterministisch für konsistente Klassifikation.
+        max_tokens=32: Nur kurze Antwort benötigt (Kategorie-Name).
+        """
+        return LLMConfig(
+            model=model,
+            temperature=0.0,
+            max_tokens=32,
+            num_ctx=2048,
+        )
+
+

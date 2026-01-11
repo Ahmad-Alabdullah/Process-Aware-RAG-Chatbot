@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChatSidebar } from "@/components/feature/chat/chat-sidebar";
 import { ChatView } from "@/components/feature/chat/chat-view";
@@ -8,9 +8,15 @@ import { Composer } from "@/components/feature/chat/composer";
 import { ContextBar } from "@/components/feature/context-bar/context-bar";
 import { useChats, useChatMessages } from "@/hooks/use-chats";
 import { useContextState } from "@/hooks/use-context-state";
-import { askQuestionStream } from "@/lib/api/streaming";
+import { askQuestionStream, type StreamStatus } from "@/lib/api/streaming";
 import { buildAskRequest } from "@/lib/utils/mode-mapping";
 import { computeAnswerConfidence } from "@/lib/utils/confidence";
+import { showErrorToast, APIError } from "@/lib/api/error-handler";
+import {
+  addMessage as addMessageApi,
+  updateLastMessage as updateLastMessageApi,
+  getMessages,
+} from "@/lib/api/chats";
 import type { Message, EvidenceChunk } from "@/types";
 
 interface ChatContainerProps {
@@ -20,39 +26,79 @@ interface ChatContainerProps {
 export function ChatContainer({ chatId }: ChatContainerProps) {
   const router = useRouter();
   const { createChat, refreshChats } = useChats();
-  const { messages, addMessage, updateLastMessage, refreshMessages } = useChatMessages(chatId || null);
+  const { messages: hookMessages, refreshMessages } = useChatMessages(chatId || null);
   const contextState = useContextState();
+  
+  // Local messages state to handle new chat case before navigation completes
+  const [localMessages, setLocalMessages] = useState<Message[]>([]);
+  const [activeChatIdState, setActiveChatIdState] = useState<string | null>(chatId || null);
+  
   const [isLoading, setIsLoading] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<StreamStatus | undefined>(undefined);
   const streamedContentRef = useRef("");
   const metadataRef = useRef<{ context: EvidenceChunk[]; gating_mode: string } | null>(null);
+  const lastRequestRef = useRef<{ content: string; chatId: string } | null>(null);
+
+  // Sync local state with hook messages when chatId matches
+  useEffect(() => {
+    if (chatId && chatId === activeChatIdState) {
+      // When we have a chatId and it matches our active state, use hook messages
+      setLocalMessages(hookMessages);
+    } else if (chatId && chatId !== activeChatIdState) {
+      // ChatId changed (navigated to different chat), reset to hook messages
+      setActiveChatIdState(chatId);
+      setLocalMessages(hookMessages);
+    } else if (!chatId) {
+      // No chatId (new chat page), keep local messages if we have an active chat
+      if (!activeChatIdState) {
+        setLocalMessages([]);
+      }
+    }
+  }, [chatId, activeChatIdState, hookMessages]);
+
+  // Refresh local messages from localStorage
+  const refreshLocalMessages = useCallback((targetChatId: string) => {
+    setLocalMessages(getMessages(targetChatId));
+  }, []);
 
   const handleSend = useCallback(
     async (content: string) => {
       // Create new chat if needed
-      let activeChatId = chatId;
-      if (!activeChatId) {
+      let targetChatId = chatId;
+      if (!targetChatId) {
         const newChat = createChat(content.slice(0, 50));
-        activeChatId = newChat.id;
+        targetChatId = newChat.id;
+        setActiveChatIdState(targetChatId);
         router.push(`/chat/${newChat.id}`);
       }
 
-      // Add user message (hook already refreshes state)
-      addMessage({
+      // Store request for potential retry
+      lastRequestRef.current = { content, chatId: targetChatId };
+
+      // Add user message using direct API call with correct chatId
+      const userMessage = addMessageApi(targetChatId, {
         role: "user",
         content,
       });
+      
+      // Update local state immediately
+      setLocalMessages(prev => [...prev, userMessage]);
 
       // Reset streaming state
       streamedContentRef.current = "";
       metadataRef.current = null;
 
       // Add placeholder assistant message
-      addMessage({
+      const assistantMessage = addMessageApi(targetChatId, {
         role: "assistant",
         content: "",
       });
+      
+      // Update local state with placeholder
+      setLocalMessages(prev => [...prev, assistantMessage]);
 
       setIsLoading(true);
+      setStreamStatus("connecting");
 
       try {
         // Build request with context
@@ -72,50 +118,102 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
           onToken: (token) => {
             streamedContentRef.current += token;
             // Update message content progressively
-            updateLastMessage({
+            updateLastMessageApi(targetChatId, {
               content: streamedContentRef.current,
             });
+            // Refresh local messages to show streaming content
+            refreshLocalMessages(targetChatId);
           },
           onDone: () => {
-            // Compute confidence from evidence
             const context = metadataRef.current?.context || [];
-            const confidence = computeAnswerConfidence(context);
+            const gatingMode = metadataRef.current?.gating_mode;
+            
+            // Only compute confidence for actual RAG responses, not guardrail fallbacks
+            const confidence = gatingMode === "guardrail" 
+              ? undefined 
+              : computeAnswerConfidence(context);
 
             // Update final message with evidence and confidence
-            updateLastMessage({
+            updateLastMessageApi(targetChatId, {
               content: streamedContentRef.current,
-              evidence: context,
+              evidence: gatingMode === "guardrail" ? undefined : context,
               confidence,
-              gating_mode: metadataRef.current?.gating_mode,
+              gating_mode: gatingMode,
             });
+            refreshLocalMessages(targetChatId);
+            setStreamStatus("done");
             refreshChats();
           },
-          onError: (error) => {
+          onProgress: (progress) => {
+            setStreamStatus(progress.status);
+          },
+          onError: (error: APIError) => {
             console.error("Stream error:", error);
-            updateLastMessage({
-              content: "Es tut mir leid, ich konnte keine Antwort generieren. Bitte versuche es erneut.",
+            
+            // Show user-friendly error message in chat
+            updateLastMessageApi(targetChatId, {
+              content: `⚠️ ${error.userMessage}`,
+              isError: true,
+            });
+            refreshLocalMessages(targetChatId);
+
+            // Show toast with retry option if retryable
+            showErrorToast(error, {
+              onRetry: error.retryable
+                ? () => {
+                    if (lastRequestRef.current) {
+                      handleSend(lastRequestRef.current.content);
+                    }
+                  }
+                : undefined,
             });
           },
         });
       } catch (error) {
         console.error("Failed to get response:", error);
-        updateLastMessage({
-          content: "Es tut mir leid, ich konnte keine Antwort generieren. Bitte versuche es erneut.",
+        
+        const apiError = error instanceof APIError 
+          ? error 
+          : new APIError({
+              code: "UNKNOWN_ERROR",
+              message: String(error),
+              userMessage: "Ein unerwarteter Fehler ist aufgetreten.",
+              retryable: true,
+            });
+
+        // Show error in chat
+        updateLastMessageApi(targetChatId, {
+          content: `⚠️ ${apiError.userMessage}`,
+          isError: true,
+        });
+        refreshLocalMessages(targetChatId);
+
+        // Show toast with retry option
+        showErrorToast(apiError, {
+          onRetry: () => {
+            if (lastRequestRef.current) {
+              handleSend(lastRequestRef.current.content);
+            }
+          },
         });
       } finally {
         setIsLoading(false);
+        setStreamStatus(undefined);
       }
     },
-    [chatId, createChat, addMessage, updateLastMessage, refreshChats, router, contextState.state]
+    [chatId, createChat, refreshChats, router, contextState.state, refreshLocalMessages]
   );
+
+  // Use local messages which are always up-to-date
+  const displayMessages = localMessages;
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      <ChatSidebar activeChatId={chatId} />
+      <ChatSidebar activeChatId={chatId || activeChatIdState || undefined} />
 
       <main className="flex-1 flex flex-col min-h-0 min-w-0">
         {/* Chat Messages */}
-        <ChatView messages={messages} isLoading={isLoading} />
+        <ChatView messages={displayMessages} isLoading={isLoading} streamStatus={streamStatus} />
 
         {/* Bottom Area: Context Bar + Composer */}
         <div className="border-t border-border p-4 space-y-3">

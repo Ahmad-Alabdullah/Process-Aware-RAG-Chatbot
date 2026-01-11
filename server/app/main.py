@@ -3,13 +3,13 @@ import contextlib
 import asyncio, os
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter
 from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
 from app.core.clients import get_redis, setup_logging
 from app.core.auth import verify_api_key
+from app.core.error_handlers import register_error_handlers, RequestIdMiddleware
 from app.services.pipeline import consume_uploads
 from app.routers import ingestion, search, qa, bpmn, whitelist
 
@@ -62,7 +62,12 @@ app = FastAPI(
 
 # Add rate limiter to app state
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Register structured error handlers (replaces default slowapi handler)
+register_error_handlers(app)
+
+# Add request ID middleware for correlation
+app.add_middleware(RequestIdMiddleware)
 
 # Parse CORS origins from settings (comma-separated string)
 cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
@@ -72,7 +77,7 @@ app.add_middleware(
     allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-API-Key"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-API-Key", "X-Request-ID"],
 )
 
 # Include routers with API key authentication dependency
@@ -89,3 +94,4 @@ app.include_router(bpmn.router, tags=[tags_metadata[4]["name"]], dependencies=ap
 def health():
     """Health check endpoint - no authentication required."""
     return {"status": "ok"}
+

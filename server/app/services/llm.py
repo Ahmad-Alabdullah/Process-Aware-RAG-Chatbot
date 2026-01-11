@@ -70,12 +70,14 @@ def ollama_generate_stream(
     """
     Generiert Antwort via Ollama mit Streaming.
 
+    Filtert automatisch <think>-Tags aus CoT-Antworten.
+
     Args:
         prompt: Der Prompt
         config: LLMConfig mit allen Parametern
 
     Yields:
-        Text-Chunks als Strings
+        Text-Chunks als Strings (ohne <think>-Blöcke)
     """
     # Default-Config falls nicht angegeben
     if config is None:
@@ -109,16 +111,63 @@ def ollama_generate_stream(
     resp.raise_for_status()
     
     import json
+    
+    # Buffer für think-tag Filtering
+    buffer = ""
+    in_think_block = False
+    
     for line in resp.iter_lines():
         if line:
             try:
                 chunk = json.loads(line)
                 if "response" in chunk:
-                    yield chunk["response"]
+                    text = chunk["response"]
+                    buffer += text
+                    
+                    # Verarbeite Buffer
+                    while True:
+                        if not in_think_block:
+                            # Suche nach öffnendem <think> Tag
+                            if "<think>" in buffer:
+                                before, after = buffer.split("<think>", 1)
+                                if before:
+                                    yield before
+                                buffer = after
+                                in_think_block = True
+                            else:
+                                # Kein Tag gefunden, aber behalte mögliche Teilstrings
+                                # z.B. "<thi" könnte der Anfang von "<think>" sein
+                                safe_output = ""
+                                if "<" in buffer:
+                                    # Behalte alles ab dem letzten "<" im Buffer
+                                    last_lt = buffer.rfind("<")
+                                    safe_output = buffer[:last_lt]
+                                    buffer = buffer[last_lt:]
+                                else:
+                                    safe_output = buffer
+                                    buffer = ""
+                                
+                                if safe_output:
+                                    yield safe_output
+                                break
+                        else:
+                            # In think-Block, suche nach schließendem </think>
+                            if "</think>" in buffer:
+                                _, after = buffer.split("</think>", 1)
+                                buffer = after
+                                in_think_block = False
+                            else:
+                                # Noch im think-Block, verwerfe Content und warte
+                                break
+                
                 if chunk.get("done", False):
+                    # Am Ende: restlichen Buffer ausgeben (falls nicht in think-Block)
+                    if not in_think_block and buffer:
+                        yield buffer
                     break
             except json.JSONDecodeError:
                 continue
+
 
 
 def vllm_generate(

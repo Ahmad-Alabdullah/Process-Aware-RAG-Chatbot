@@ -132,6 +132,7 @@ export interface Message {
   evidence?: EvidenceChunk[];
   confidence?: ConfidenceInfo;
   gating_mode?: string;
+  isError?: boolean; // Indicates if this message is an error message
   created_at: string;
 }
 

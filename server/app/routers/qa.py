@@ -14,6 +14,7 @@ from app.services.gating import compute_gating, GatingMode
 from app.core.clients import get_logger
 from app.core.config import settings
 from app.core.llm_config import LLMPresets
+from app.core.guardrails import classify_query, should_use_rag, get_fallback_response
 
 router = APIRouter(prefix="/api/qa")
 
@@ -252,6 +253,41 @@ def ask_stream(
     - event: done, data: {}
     """
     logger.info("QA /ask/stream: query=%s", body.query[:50] if body.query else "")
+
+    # 0) Query Guardrail: Klassifiziere Query und filtere Off-Topic
+    intent, confidence = classify_query(body.query)
+    logger.debug(f"Query intent: {intent.value} (confidence: {confidence})")
+    
+    if not should_use_rag(intent):
+        # Fallback-Response für Non-RAG Queries (Greetings, Chitchat, etc.)
+        fallback_response = get_fallback_response(intent)
+        logger.info(f"Guardrail triggered: {intent.value} -> returning fallback")
+        
+        def generate_fallback_events() -> Generator[str, None, None]:
+            # Sende Metadata
+            metadata = {
+                "context": [],
+                "gating_mode": "guardrail",
+                "gating_hint": f"Query classified as {intent.value}",
+                "gating_metadata": {"intent": intent.value, "confidence": confidence},
+                "used_model": None,
+                "used_hyde": False,
+                "used_rerank": False,
+            }
+            yield f"event: metadata\ndata: {json.dumps(metadata)}\n\n"
+            
+            # Sende Fallback-Antwort als einzelnes Token (für sofortige Anzeige)
+            yield f"event: token\ndata: {json.dumps(fallback_response)}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        
+        return StreamingResponse(
+            generate_fallback_events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
 
     # 1) Gating berechnen
     gating = compute_gating(

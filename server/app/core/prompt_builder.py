@@ -91,10 +91,11 @@ def _format_gating_block(gating_hint: str, style: str) -> str:
         return ""
 
     return f"""
-### Prozesskontext (BEACHTEN!)
+### Prozesskontext [BPMN-Prozess]
 {gating_hint}
 
-⚠️ Beschränke deine Antwort auf diesen Kontext. Erwähne keine Schritte außerhalb des erlaubten Bereichs."""
+⚠️ Beschränke deine Antwort auf diesen Kontext. Erwähne keine Schritte außerhalb des erlaubten Bereichs.
+Verwende [BPMN-Prozess] als Quellenangabe für Prozessinformationen."""
 
 
 def build_prompt(
@@ -166,7 +167,8 @@ def _build_baseline_prompt(
 
 ### Antwort
 Beantworte die Frage präzise und vollständig auf Deutsch.
-- Zitiere relevante Stellen mit [1], [2], etc.
+- Zitiere Dokumente mit [1], [2], etc.
+- Zitiere Prozessinformationen mit [BPMN-Prozess].
 - Strukturiere die Antwort klar und übersichtlich.
 - Wenn Informationen fehlen, sage: "Basierend auf den vorliegenden Dokumenten kann ich dazu keine Aussage treffen."
 
@@ -289,22 +291,20 @@ def _build_cot_prompt(
 {body.query}
 
 ### Anleitung
-Beantworte die Frage in zwei Schritten:
+Beantworte die Frage basierend auf den Dokumenten und dem Prozesskontext.
+Nutze <think>...</think> für deine internen Überlegungen - dieser Teil wird dem Nutzer NICHT gezeigt.
+Nach </think> kommt nur die finale Antwort für den Nutzer.
 
-1. **Denke zuerst nach** (in <think>-Tags, wird dem Nutzer nicht gezeigt):
-   - Welche Dokumente sind relevant?
-   - Was ist der Prozesskontext?
-   - Welche Informationen fehlen?
-
-2. **Formuliere dann die Antwort**:
-   - Präzise und strukturiert
-   - Mit Zitaten [1], [2], etc.
-   - Auf Deutsch
+Die Antwort soll:
+- Präzise und strukturiert sein
+- Mit [1], [2], etc. auf Dokumente verweisen
+- Mit [BPMN-Prozess] auf Prozessinformationen verweisen
+- Auf Deutsch formuliert sein
 
 <think>
-Schritt 1: Relevante Informationen identifizieren...
-Schritt 2: Prozesskontext beachten...
-Schritt 3: Antwort strukturieren...
+- Relevante Dokumente: ...
+- Prozesskontext: ...
+- Fehlende Informationen: ...
 </think>
 
 Antwort:"""

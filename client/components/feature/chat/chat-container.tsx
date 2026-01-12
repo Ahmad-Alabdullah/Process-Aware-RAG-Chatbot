@@ -6,6 +6,11 @@ import { ChatSidebar } from "@/components/feature/chat/chat-sidebar";
 import { ChatView } from "@/components/feature/chat/chat-view";
 import { Composer } from "@/components/feature/chat/composer";
 import { ContextBar } from "@/components/feature/context-bar/context-bar";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
 import { useChats, useChatMessages } from "@/hooks/use-chats";
 import { useContextState } from "@/hooks/use-context-state";
 import { askQuestionStream, type StreamStatus } from "@/lib/api/streaming";
@@ -220,27 +225,44 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
   const displayMessages = localMessages;
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      <ChatSidebar activeChatId={chatId || activeChatIdState || undefined} />
+    <ResizablePanelGroup
+      direction="horizontal"
+      className="h-screen bg-background"
+    >
+      {/* Resizable Sidebar Panel */}
+      <ResizablePanel
+        defaultSize={20}
+        minSize={15}
+        maxSize={35}
+        className="min-w-0"
+      >
+        <ChatSidebar activeChatId={chatId || activeChatIdState || undefined} />
+      </ResizablePanel>
 
-      <main className="flex-1 flex flex-col min-h-0 min-w-0">
-        {/* Chat Messages */}
-        <ChatView messages={displayMessages} isLoading={isLoading} streamStatus={streamStatus} />
+      <ResizableHandle withHandle />
 
-        {/* Bottom Area: Context Bar + Composer */}
-        <div className="border-t border-border p-4 space-y-3">
-          <ContextBar
-            state={contextState.state}
-            onProcessChange={contextState.setProcess}
-            onTaskChange={contextState.setTask}
-            onScopeChange={contextState.setScope}
-            onClearProcess={contextState.clearProcess}
-            onClearTask={contextState.clearTask}
-          />
+      {/* Main Chat Panel */}
+      <ResizablePanel defaultSize={80} minSize={50} className="min-w-0">
+        <main className="flex h-full flex-col min-h-0 min-w-0">
+          {/* Chat Messages*/}
+          <ChatView messages={displayMessages} isLoading={isLoading} streamStatus={streamStatus} />
 
-          <Composer onSend={handleSend} isLoading={isLoading} />
-        </div>
-      </main>
-    </div>
+          {/* Bottom Area: Context Bar + Composer*/}
+          <div className="shrink-0 border-t border-border p-4 space-y-2">
+            <ContextBar
+              state={contextState.state}
+              onProcessChange={contextState.setProcess}
+              onRoleChange={contextState.setRole}
+              onTaskChange={contextState.setTask}
+              onScopeChange={contextState.setScope}
+              onClearProcess={contextState.clearProcess}
+              onClearTask={contextState.clearTask}
+            />
+
+            <Composer onSend={handleSend} isLoading={isLoading} />
+          </div>
+        </main>
+      </ResizablePanel>
+    </ResizablePanelGroup>
   );
 }

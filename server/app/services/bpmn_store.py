@@ -284,37 +284,45 @@ def list_definitions() -> List[Dict[str, Any]]:
 def list_process_nodes_lanes(process_id: str) -> Dict[str, Any]:
     driver = get_neo4j()
     with driver.session() as s:
-        data = s.run(
+        # Query lanes
+        lanes_data = s.run(
             """
-            MATCH (p:Process {xmlId:$pid})
-            OPTIONAL MATCH (p)-[:HAS_LANE]->(l:Lane)
-            OPTIONAL MATCH (p)-[:CONTAINS]->(n:Node)
-            OPTIONAL MATCH (l)-[:CONTAINS]->(n2:Node)
-            WITH p,
-                 collect(DISTINCT {id:l.xmlId, name:l.name}) AS lanes,
-                 collect(DISTINCT {
-                     id:n.xmlId,
-                     name:n.name,
-                     type:n.type
-                 }) AS nodes1,
-                 collect(DISTINCT {
-                     id:n2.xmlId,
-                     name:n2.name,
-                     type:n2.type,
-                     laneId: l.xmlId
-                 }) AS nodes2
-            WITH p, lanes,
-                 apoc.coll.toSet(nodes1 + nodes2) AS nodes
-            RETURN p.xmlId AS id,
-                   p.name AS name,
-                   lanes,
-                   nodes
+            MATCH (p:Process {xmlId:$pid})-[:HAS_LANE]->(l:Lane)
+            RETURN collect(DISTINCT {id:l.xmlId, name:l.name}) AS lanes
             """,
             pid=process_id,
         ).single()
-    if not data:
+        
+        # Query nodes with their lane associations
+        nodes_data = s.run(
+            """
+            MATCH (p:Process {xmlId:$pid})-[:CONTAINS]->(n:Node)
+            OPTIONAL MATCH (l:Lane)-[:CONTAINS]->(n)
+            RETURN collect(DISTINCT {
+                id: n.xmlId,
+                name: n.name,
+                type: n.type,
+                laneId: l.xmlId
+            }) AS nodes
+            """,
+            pid=process_id,
+        ).single()
+        
+        # Get process info
+        proc_data = s.run(
+            "MATCH (p:Process {xmlId:$pid}) RETURN p.xmlId AS id, p.name AS name",
+            pid=process_id,
+        ).single()
+        
+    if not proc_data:
         return {}
-    return data
+    
+    return {
+        "id": proc_data["id"],
+        "name": proc_data["name"],
+        "lanes": lanes_data["lanes"] if lanes_data else [],
+        "nodes": nodes_data["nodes"] if nodes_data else [],
+    }
 
 
 def process_graph(process_id: str) -> Dict[str, Any]:

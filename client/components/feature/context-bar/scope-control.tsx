@@ -17,14 +17,15 @@ export function ScopeControl({
   stepDisabled = false,
 }: ScopeControlProps) {
   const options: { value: ScopeType; label: string }[] = [
-    { value: "overview", label: "Überblick" },
+    { value: "docs", label: "Dokumente" },
+    { value: "overview", label: "Prozess" },
     { value: "step", label: "Schritt" },
   ];
 
   return (
     <div
       className={cn(
-        "inline-flex rounded-lg border border-input p-1 bg-muted/50",
+        "inline-flex h-10 items-center rounded-lg border border-input p-1 bg-muted/50",
         disabled && "opacity-50 pointer-events-none"
       )}
       role="radiogroup"

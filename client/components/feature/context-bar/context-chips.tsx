@@ -50,10 +50,16 @@ export function ContextChips({
         className={
           state.scope === "step"
             ? "bg-purple-500/20 text-purple-400 border-purple-500/30"
-            : "bg-blue-500/20 text-blue-400 border-blue-500/30"
+            : state.scope === "overview"
+            ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
+            : "bg-green-500/20 text-green-400 border-green-500/30"
         }
       >
-        {state.scope === "step" ? "Schritt-Kontext" : "Prozess-Überblick"}
+        {state.scope === "step" 
+          ? "Schritt-Kontext" 
+          : state.scope === "overview" 
+          ? "Prozess-Kontext" 
+          : "Nur Dokumente"}
       </Badge>
     </div>
   );

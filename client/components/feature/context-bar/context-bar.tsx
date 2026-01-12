@@ -2,14 +2,16 @@
 
 import { AlertCircle } from "lucide-react";
 import { ProcessCombobox } from "./process-combobox";
+import { RoleCombobox } from "./role-combobox";
 import { TaskCombobox } from "./task-combobox";
 import { ScopeControl } from "./scope-control";
 import { ContextChips } from "./context-chips";
-import type { ContextState, ProcessOption, TaskOption, ScopeType } from "@/types";
+import type { ContextState, ProcessOption, TaskOption, LaneOption, ScopeType } from "@/types";
 
 interface ContextBarProps {
   state: ContextState;
   onProcessChange: (process: ProcessOption | null) => void;
+  onRoleChange: (role: LaneOption | null) => void;
   onTaskChange: (task: TaskOption | null) => void;
   onScopeChange: (scope: ScopeType) => void;
   onClearProcess: () => void;
@@ -19,6 +21,7 @@ interface ContextBarProps {
 export function ContextBar({
   state,
   onProcessChange,
+  onRoleChange,
   onTaskChange,
   onScopeChange,
   onClearProcess,
@@ -30,24 +33,37 @@ export function ContextBar({
 
   return (
     <div className="space-y-3 p-3 border border-border rounded-lg bg-muted/30">
-      {/* Controls Row */}
+      {/* Scope Control - First Row (always visible when process selected) */}
+      {hasProcess && (
+        <div className="flex items-center gap-3">
+          <ScopeControl
+            value={state.scope}
+            onChange={onScopeChange}
+            disabled={!hasProcess}
+            stepDisabled={!isModeled}
+          />
+        </div>
+      )}
+
+      {/* Comboboxes Row */}
       <div className="flex flex-wrap items-start gap-3">
         <ProcessCombobox value={state.process} onSelect={onProcessChange} />
 
         {hasProcess && (
           <>
-            <TaskCombobox
+            <RoleCombobox
               processId={isModeled ? state.process!.id : null}
-              value={state.task}
-              onSelect={onTaskChange}
-              disabled={!isModeled}
+              value={state.role}
+              onSelect={onRoleChange}
+              disabled={!isModeled || state.scope !== "step"}
             />
 
-            <ScopeControl
-              value={state.scope}
-              onChange={onScopeChange}
-              disabled={!hasProcess}
-              stepDisabled={!isModeled}
+            <TaskCombobox
+              processId={isModeled ? state.process!.id : null}
+              roleId={state.role?.id ?? null}
+              value={state.task}
+              onSelect={onTaskChange}
+              disabled={!isModeled || state.scope !== "step"}
             />
           </>
         )}

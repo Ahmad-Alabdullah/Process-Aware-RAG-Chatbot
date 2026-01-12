@@ -4,6 +4,7 @@ import type {
   ProcessCombo,
   ProcessOption,
   TaskOption,
+  LaneOption,
 } from "@/types";
 
 interface DefinitionsResponse {
@@ -22,6 +23,11 @@ interface ComboResponse {
   name: string;
   lanes: Array<{ id: string; name: string }>;
   nodes: Array<{ id: string; name: string; type: string; laneId?: string }>;
+}
+
+interface LanesResponse {
+  ok: boolean;
+  lanes: Array<{ id: string; name: string; task_count?: number }>;
 }
 
 /**
@@ -135,8 +141,8 @@ export async function fetchTasks(processId: string): Promise<TaskOption[]> {
   const combo = await fetchProcessCombo(processId);
   if (!combo) return [];
 
-  // Only include user-facing task types (no callActivity which causes duplicates)
-  const userFacingTypes = ["task", "userTask"];
+  // Only include userTask (manual user tasks, not automated system tasks)
+  const userFacingTypes = ["userTask"];
 
   // Filter and deduplicate by name
   const seenNames = new Set<string>();
@@ -160,4 +166,21 @@ export async function fetchTasks(processId: string): Promise<TaskOption[]> {
   }
 
   return tasks;
+}
+
+/**
+ * Fetch lanes/roles for a process (for role selection combobox)
+ */
+export async function fetchRoles(processId: string): Promise<LaneOption[]> {
+  try {
+    const response = await apiClient.get<LanesResponse>(
+      `/api/bpmn/processes/${processId}/lanes`
+    );
+    if (response.ok) {
+      return response.lanes || [];
+    }
+    return [];
+  } catch {
+    return [];
+  }
 }

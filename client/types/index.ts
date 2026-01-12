@@ -102,6 +102,14 @@ export interface TaskOption {
   lane_id?: string;
 }
 
+// === Lane/Role Selection ===
+
+export interface LaneOption {
+  id: string;
+  name: string;
+  task_count?: number;
+}
+
 export interface BpmnDefinition {
   id: string;
   name: string;
@@ -160,11 +168,12 @@ export type GatingMode =
   | "GATING_ENABLED"
   | "DOCS_ONLY";
 
-export type ScopeType = "overview" | "step";
+export type ScopeType = "docs" | "overview" | "step";
 
 export interface ContextState {
   process: ProcessOption | null;
   task: TaskOption | null;
+  role: LaneOption | null;  // ← NEW: Selected role/lane
   scope: ScopeType;
 }
 

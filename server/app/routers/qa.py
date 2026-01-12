@@ -358,6 +358,23 @@ def ask_stream(
         }
         for c in chunks
     ]
+    
+    # Add BPMN process as source when gating provides process context
+    if gating.mode != GatingMode.NONE and body.process_name:
+        bpmn_source = {
+            "chunk_id": f"bpmn_{body.process_id or body.process_name}",
+            "text": gating.prompt_hint[:300] if gating.prompt_hint else "Prozesskontext",
+            "score": None,
+            "rerank_score": None,
+            "metadata": {
+                "source_type": "bpmn",
+                "process_name": body.process_name,
+                "filename": f"BPMN-Prozess: {body.process_name}",
+                "title": f"Prozessmodell: {body.process_name}",
+            },
+        }
+        ctx.insert(0, bpmn_source)
+    
     context_text = "\n\n---\n\n".join(c["text"] for c in chunks)
 
     # 4) Prompt

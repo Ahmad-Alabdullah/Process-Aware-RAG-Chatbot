@@ -22,6 +22,7 @@ import type { TaskOption } from "@/types";
 
 interface TaskComboboxProps {
   processId: string | null;
+  roleId: string | null;  // ← Filter by lane_id
   value: TaskOption | null;
   onSelect: (task: TaskOption | null) => void;
   disabled?: boolean;
@@ -29,12 +30,18 @@ interface TaskComboboxProps {
 
 export function TaskCombobox({
   processId,
+  roleId,
   value,
   onSelect,
   disabled = false,
 }: TaskComboboxProps) {
   const [open, setOpen] = useState(false);
-  const { data: tasks = [], isLoading } = useTasks(processId);
+  const { data: allTasks = [], isLoading } = useTasks(processId);
+  
+  // Filter tasks by role (lane_id) if selected
+  const tasks = roleId
+    ? allTasks.filter(t => t.lane_id === roleId)
+    : allTasks;
 
   if (disabled) {
     return (

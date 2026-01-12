@@ -9,6 +9,9 @@ export function determineGatingMode(context: ContextState): GatingMode {
 
   if (!process) return "NONE";
 
+  // Docs-only mode: only process_name filter, no BPMN context
+  if (scope === "docs") return "DOCS_ONLY";
+
   if (!process.has_model) return "DOCS_ONLY";
 
   if (scope === "overview") return "PROCESS_CONTEXT";
@@ -35,10 +38,12 @@ export function buildAskRequest(
   };
 
   if (context.process) {
+    // Always send process_name for filtering
     request.process_name = context.process.name;
 
-    if (context.process.has_model) {
-      request.process_id = context.process.id;
+    // Only send BPMN params if NOT in docs-only mode
+    if (mode !== "DOCS_ONLY" && context.process.has_model) {
+        request.process_id = context.process.id;
 
       if (mode === "PROCESS_CONTEXT") {
         request.force_process_context = true;
@@ -46,6 +51,11 @@ export function buildAskRequest(
 
       if (mode === "GATING_ENABLED" && context.task) {
         request.current_node_id = context.task.task_id;
+      }
+
+      // Add role for whitelist filtering and gating context
+      if (context.role) {
+        request.roles = [context.role.name];
       }
     }
   }

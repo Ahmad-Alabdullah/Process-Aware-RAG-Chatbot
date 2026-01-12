@@ -54,16 +54,26 @@ function LoadingIndicator({ status }: { status?: StreamStatus }) {
 }
 
 export function ChatView({ messages, isLoading, streamStatus }: ChatViewProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Use setTimeout to ensure DOM is updated
+    const timer = setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, 50);
+    return () => clearTimeout(timer);
   }, [messages]);
+
+  // Scroll to bottom on initial mount
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "instant" });
+  }, []);
 
   if (messages.length === 0 && !isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center min-h-0 overflow-hidden">
         <div className="text-center text-muted-foreground">
           <h2 className="text-xl font-semibold mb-2">Willkommen!</h2>
           <p className="text-sm">
@@ -81,7 +91,7 @@ export function ChatView({ messages, isLoading, streamStatus }: ChatViewProps) {
   const showLoadingIndicator = isLoading && streamStatus !== "streaming" && streamStatus !== "done";
 
   return (
-    <ScrollArea className="flex-1 min-h-0">
+    <div className="flex-1 overflow-y-auto min-h-0" ref={scrollRef}>
       <div className="max-w-3xl mx-auto py-6 px-4 space-y-4">
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
@@ -91,7 +101,7 @@ export function ChatView({ messages, isLoading, streamStatus }: ChatViewProps) {
         )}
         <div ref={bottomRef} />
       </div>
-    </ScrollArea>
+    </div>
   );
 }
 

@@ -69,6 +69,53 @@ def get_process_combo(process_id: str):
     return {"ok": True, **data}
 
 
+@router.get("/processes/{process_id}/lanes", summary="Lanes für Rollenauswahl")
+def get_process_lanes(process_id: str):
+    """
+    Liefert alle Lanes eines Prozesses für die Rollenauswahl-Combobox.
+    
+    Returns:
+        {
+            "ok": true,
+            "lanes": [
+                {"id": "Lane_1", "name": "Antragsteller", "task_count": 3},
+                {"id": "Lane_2", "name": "Vorgesetzter", "task_count": 2}
+            ]
+        }
+    """
+    data = list_process_nodes_lanes(process_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Prozess nicht gefunden")
+    
+    lanes = data.get("lanes", [])
+    nodes = data.get("nodes", [])
+    
+    # Only count userTask (manual user tasks, not automated system tasks)
+    user_facing_types = {"userTask"}
+    
+    # Count tasks per lane (only actual tasks, not events/gateways)
+    lane_task_counts = {}
+    for node in nodes:
+        if node.get("type") not in user_facing_types:
+            continue
+        lane_id = node.get("laneId")
+        if lane_id:
+            lane_task_counts[lane_id] = lane_task_counts.get(lane_id, 0) + 1
+    
+    # Format for combobox - exclude lanes with 0 tasks
+    formatted_lanes = [
+        {
+            "id": lane["id"],
+            "name": lane["name"],
+            "task_count": lane_task_counts.get(lane["id"], 0)
+        }
+        for lane in lanes
+        if lane.get("id") and lane_task_counts.get(lane["id"], 0) > 0
+    ]
+    
+    return {"ok": True, "lanes": formatted_lanes}
+
+
 @router.get("/processes/{process_id}/graph", summary="Prozessgraph (Nodes + Edges)")
 def get_process_graph(process_id: str):
     g = process_graph(process_id)

@@ -53,7 +53,7 @@ export function ChatSidebar({ activeChatId }: ChatSidebarProps) {
   };
 
   return (
-    <aside className="sticky top-0 flex h-screen w-64 flex-col border-r border-border bg-sidebar shrink-0">
+    <aside className="flex h-full w-full flex-col border-r border-border bg-sidebar">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-border">
         <h1 className="font-semibold text-lg">Chats</h1>
@@ -82,31 +82,26 @@ export function ChatSidebar({ activeChatId }: ChatSidebarProps) {
                 key={chat.id}
                 onClick={() => handleOpenChat(chat.id)}
                 className={cn(
-                  "group flex items-start gap-3 rounded-lg p-3 cursor-pointer transition-colors",
+                  "group flex items-start gap-2 rounded-lg p-2.5 cursor-pointer transition-colors",
                   "hover:bg-sidebar-accent",
                   activeChatId === chat.id && "bg-sidebar-accent"
                 )}
               >
-                <MessageSquare className="h-5 w-5 mt-0.5 shrink-0 text-muted-foreground" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm truncate">
+                <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium truncate flex-1">
                       {chat.title}
                     </span>
-                    <span className="text-xs text-muted-foreground shrink-0">
+                    <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
                       {formatTime(chat.updated_at)}
                     </span>
                   </div>
-                  {chat.preview && (
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">
-                      {chat.preview}
-                    </p>
-                  )}
                 </div>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100 shrink-0"
+                  className="h-5 w-5 opacity-0 group-hover:opacity-100 shrink-0 -mt-0.5"
                   onClick={(e) => handleDeleteChat(e, chat.id)}
                   title="Chat löschen"
                 >

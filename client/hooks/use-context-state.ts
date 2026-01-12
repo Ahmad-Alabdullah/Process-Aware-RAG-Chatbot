@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { ContextState, ProcessOption, TaskOption, ScopeType } from "@/types";
+import type { ContextState, ProcessOption, TaskOption, LaneOption, ScopeType } from "@/types";
 
 const initialState: ContextState = {
   process: null,
   task: null,
-  scope: "overview",
+  role: null,
+  scope: "docs",  // Default to docs scope
 };
 
 export function useContextState() {
@@ -16,10 +17,20 @@ export function useContextState() {
     setState((prev) => ({
       ...prev,
       process,
-      // Clear task when process changes
+      // Clear role and task when process changes
+      role: null,
       task: null,
-      // Reset scope to overview when selecting a non-modeled process
-      scope: process?.has_model ? prev.scope : "overview",
+      // Default to docs scope (works for all process types)
+      scope: "docs",
+    }));
+  }, []);
+
+  const setRole = useCallback((role: LaneOption | null) => {
+    setState((prev) => ({
+      ...prev,
+      role,
+      // Clear task if it's not in the new role's lane
+      task: prev.task && prev.task.lane_id !== role?.id ? null : prev.task,
     }));
   }, []);
 
@@ -28,7 +39,7 @@ export function useContextState() {
       ...prev,
       task,
       // Auto-switch to step context when selecting a task
-      scope: task ? "step" : "overview",
+      scope: task ? "step" : "docs",
     }));
   }, []);
 
@@ -36,8 +47,9 @@ export function useContextState() {
     setState((prev) => ({
       ...prev,
       scope,
-      // Clear task when switching to overview
-      task: scope === "overview" ? null : prev.task,
+      // Clear task AND role when switching to docs or overview (only keep them in step mode)
+      task: scope === "step" ? prev.task : null,
+      role: scope === "step" ? prev.role : null,
     }));
   }, []);
 
@@ -49,8 +61,8 @@ export function useContextState() {
     setState((prev) => ({
       ...prev,
       task: null,
-      // Auto-switch to overview when clearing task in step mode
-      scope: prev.scope === "step" ? "overview" : prev.scope,
+      // Auto-switch to docs when clearing task in step mode
+      scope: prev.scope === "step" ? "docs" : prev.scope,
     }));
   }, []);
 
@@ -61,6 +73,7 @@ export function useContextState() {
   return {
     state,
     setProcess,
+    setRole,
     setTask,
     setScope,
     clearProcess,

@@ -11,6 +11,7 @@ from app.core.prompt_builder import build_prompt
 from app.services.retrieval import hybrid_search
 from app.services.llm import generate, hyde_rewrite, ollama_generate_stream
 from app.services.gating import compute_gating, GatingMode
+from app.services.query_reformulation import reformulate_query, should_reformulate
 from app.core.clients import get_logger
 from app.core.config import settings
 from app.core.llm_config import LLMPresets
@@ -299,10 +300,27 @@ def ask_stream(
         force_process_context=body.force_process_context,
     )
 
-    # 2) Optional HyDE
+    # 2) History-Aware Query Reformulation (for follow-up questions)
     search_input = body.query
+    
+    # DEBUG: Log incoming chat history
+    if body.chat_history:
+        logger.info(f"[DEBUG] Received chat_history with {len(body.chat_history)} messages")
+        for i, msg in enumerate(body.chat_history):
+            logger.info(f"[DEBUG]   [{i}] {msg.role}: {msg.content[:50]}...")
+    else:
+        logger.info("[DEBUG] No chat_history received")
+    
+    if should_reformulate(body.query, body.chat_history):
+        logger.info(f"[DEBUG] should_reformulate=True for query: '{body.query}'")
+        search_input = reformulate_query(body.query, body.chat_history)
+        logger.info(f"Query reformulated: '{body.query}' -> '{search_input}'")
+    else:
+        logger.info(f"[DEBUG] should_reformulate=False for query: '{body.query}'")
+    
+    # 3) Optional HyDE (on reformulated query)
     if body.use_hyde:
-        search_input = hyde_rewrite(body.query, model=body.model)
+        search_input = hyde_rewrite(search_input, model=body.model)
 
     # 3) Retrieval (same pattern as regular /ask endpoint)
     chunks = hybrid_search(

@@ -47,6 +47,44 @@ def _format_context_block(context_text: str) -> str:
     return context_text
 
 
+def _format_chat_history(body: AskBody, max_turns: int = 3, max_chars: int = 200) -> str:
+    """
+    Formatiert Chat-History für Prompt-Injection (Sliding Window).
+    
+    Basiert auf:
+    - "Sliding Window Memory" (NVIDIA Research, 2025)
+    - "History-Aware RAG" (TowardsAI, 2025)
+    
+    Args:
+        body: AskBody mit chat_history
+        max_turns: Maximale Anzahl Turns (1 Turn = User + Assistant)
+        max_chars: Maximale Zeichen pro Nachricht (Truncation)
+        
+    Returns:
+        Formatierter History-Block oder leerer String
+    """
+    if not body.chat_history:
+        return ""
+    
+    # Limit to last N*2 messages (N turns)
+    limited = body.chat_history[-(max_turns * 2):]
+    
+    if not limited:
+        return ""
+    
+    formatted = "### Vorherige Konversation\n"
+    for msg in limited:
+        role = "Nutzer" if msg.role == "user" else "Assistent"
+        # Truncate long messages
+        content = msg.content
+        if len(content) > max_chars:
+            content = content[:max_chars] + "..."
+        formatted += f"**{role}:** {content}\n"
+    
+    formatted += "\n"
+    return formatted
+
+
 def _format_gating_block(gating_hint: str, style: str) -> str:
     """Formatiert den Gating-Hint mit Erklärung."""
     if not gating_hint or style == "no_gating":
@@ -108,15 +146,17 @@ def _build_baseline_prompt(
 
     Struktur (nach Liu et al., 2023 "Lost in the Middle"):
     1. System-Instruktion (oben)
-    2. Kontext/Dokumente (Mitte - wichtigstes zuerst)
-    3. Gating-Hint (vor Frage)
-    4. Frage (unten - höchste Aufmerksamkeit)
-    5. Output-Format (ganz unten)
+    2. Chat-History (für Follow-up Kontext)
+    3. Kontext/Dokumente (Mitte - wichtigstes zuerst)
+    4. Gating-Hint (vor Frage)
+    5. Frage (unten - höchste Aufmerksamkeit)
+    6. Output-Format (ganz unten)
     """
     gating_block = _format_gating_block(gating_hint, "baseline")
+    history_block = _format_chat_history(body)
 
     return f"""{SYSTEM_PROMPT_GATING if gating_hint else SYSTEM_PROMPT_DE}
-
+{history_block}
 ### Relevante Dokumente
 {_format_context_block(context_text)}
 {gating_block}
@@ -197,9 +237,10 @@ def _build_fewshot_prompt(
     Basiert auf: Brown et al. (2020) "Language Models are Few-Shot Learners"
     """
     gating_block = _format_gating_block(gating_hint, "fewshot")
+    history_block = _format_chat_history(body)
 
     return f"""{SYSTEM_PROMPT_GATING if gating_hint else SYSTEM_PROMPT_DE}
-
+{history_block}
 Hier sind Beispiele für gute Antworten:
 {FEWSHOT_EXAMPLES}
 
@@ -236,9 +277,10 @@ def _build_cot_prompt(
     Verwendet <think>-Tags für internes Reasoning (werden später entfernt).
     """
     gating_block = _format_gating_block(gating_hint, "cot")
+    history_block = _format_chat_history(body)
 
     return f"""{SYSTEM_PROMPT_GATING if gating_hint else SYSTEM_PROMPT_DE}
-
+{history_block}
 ### Relevante Dokumente
 {_format_context_block(context_text)}
 {gating_block}

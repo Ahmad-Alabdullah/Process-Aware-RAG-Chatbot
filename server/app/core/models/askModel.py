@@ -3,10 +3,22 @@ from typing import List, Optional
 from app.core.config import settings
 
 
+class ChatMessage(BaseModel):
+    """Single message in chat history for conversational context."""
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+
+
 class AskBody(BaseModel):
     # Query + Retrieval
     query: str
     top_k: int = int(settings.TOP_K)
+
+    # Chat History (sliding window for follow-up questions)
+    chat_history: Optional[List[ChatMessage]] = Field(
+        default=None,
+        description="Previous messages for context (max 6 messages = 3 turns)"
+    )
 
     # Reranking (Cross-Encoder)
     use_rerank: bool = Field(

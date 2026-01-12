@@ -101,10 +101,22 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
       setStreamStatus("connecting");
 
       try {
-        // Build request with context
+        // Get chat history from STORE, not React state (closure issue)
+        // localMessages in this closure may be stale - use getMessages for fresh data
+        const currentMessages = getMessages(targetChatId);
+        const recentHistory = currentMessages.slice(-6).map(m => ({
+          role: m.role as "user" | "assistant",
+          content: m.content.slice(0, 200), // Truncate to match backend
+        }));
+        
+        console.log("[DEBUG] Chat history being sent:", recentHistory.length, "messages", 
+          recentHistory.map(h => `${h.role}: ${h.content.slice(0, 30)}...`));
+
+        // Build request with context and history
         const request = buildAskRequest(content, contextState.state, {
           use_rerank: true,
           top_k: 5,
+          chat_history: recentHistory.length > 0 ? recentHistory : undefined,
         });
 
         // Stream response from backend

@@ -1,5 +1,12 @@
 // API Types for Process-Aware RAG Chatbot
 
+// === Chat History for Conversational Context ===
+
+export interface ChatHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 // === QA/Chat Types ===
 
 export interface AskRequest {
@@ -17,6 +24,8 @@ export interface AskRequest {
   force_process_context?: boolean;
   prompt_style?: string;
   tags?: string[];
+  // Chat history for follow-up questions (sliding window: last 3 turns)
+  chat_history?: ChatHistoryMessage[];
 }
 
 export interface EvidenceChunk {

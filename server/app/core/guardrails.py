@@ -10,8 +10,9 @@ Implementiert Input-Guardrails zur Query-Klassifikation vor der RAG-Pipeline.
 """
 
 from enum import Enum
-from typing import Tuple
+from typing import Tuple, List, Optional
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +77,10 @@ GREETING_PATTERNS = [
 ]
 
 CHITCHAT_PATTERNS = [
-    "wie geht", "wie gehts", "wie gehts dir", "wie steht es", "wie stehts",
+    # Spezifischere Patterns - keine kurzen Substrings mehr
+    "wie geht es", "wie gehts", "wie gehts dir", "wie steht es", "wie stehts",
     "was machst du", "wer bist du", "wie heißt du", "was kannst du", "was bist du",
-    "erzähl mir was", "langweilig", "lustig", "alles klar", "na",
+    "erzähl mir was", "erzähl mir etwas",
 ]
 
 # Process-Keywords für schnelle positive Klassifikation
@@ -146,10 +148,10 @@ def classify_query(query: str) -> Tuple[QueryIntent, float]:
                 logger.debug(f"Query '{query}' classified as GREETING (short)")
                 return QueryIntent.GREETING, 0.9
     
-    # 4) Chitchat-Pattern Check
+    # 4) Chitchat-Pattern Check (Substring-Match für längere Patterns)
     for pattern in CHITCHAT_PATTERNS:
         if pattern in query_lower:
-            logger.debug(f"Query '{query}' classified as CHITCHAT (pattern)")
+            logger.debug(f"Query '{query}' classified as CHITCHAT (pattern: {pattern})")
             return QueryIntent.CHITCHAT, 0.9
     
     # 5) Frage-Wörter deuten auf echte Frage hin
@@ -210,3 +212,50 @@ def get_fallback_response(intent: QueryIntent) -> str:
         Benutzerfreundliche deutsche Antwort
     """
     return FALLBACK_RESPONSES.get(intent, FALLBACK_RESPONSES[QueryIntent.UNCLEAR])
+
+
+def classify_query_with_context(
+    query: str,
+    chat_history: Optional[List[dict]] = None
+) -> Tuple[QueryIntent, float]:
+    """
+    Kontext-bewusste Query-Klassifikation für Folgefragen.
+    
+    Basiert auf Best Practice aus "Contextual Query Understanding in RAG" (2025):
+    - Folgefragen nach substantiellen RAG-Antworten sind wahrscheinlich prozessbezogen
+    - Vermeidet False Positives bei elliptischen Folgefragen
+    
+    Args:
+        query: Die aktuelle Benutzeranfrage
+        chat_history: Liste von {"role": "user"|"assistant", "content": str}
+        
+    Returns:
+        Tuple[QueryIntent, confidence]: Intent und Konfidenz
+    """
+    # Wenn Chat-History existiert und letzte Antwort substantiell war,
+    # ist die Folgefrage wahrscheinlich auch prozessbezogen
+    logger.info(f"[Context Check] chat_history: {len(chat_history) if chat_history else 0} messages")
+    
+    if chat_history and len(chat_history) >= 2:
+        # Finde letzte Assistant-Nachricht
+        last_assistant = None
+        for msg in reversed(chat_history):
+            if msg.get("role") == "assistant":
+                last_assistant = msg
+                break
+        
+        if last_assistant:
+            content = last_assistant.get("content", "")
+            logger.info(f"[Context Check] Last assistant message: {len(content)} chars")
+            # Wenn vorherige Antwort >200 Zeichen → war substantielle RAG-Antwort
+            if len(content) > 200:
+                logger.info(
+                    f"Query '{query[:50]}...' bypassing guardrail (context: previous response was {len(content)} chars)"
+                )
+                return QueryIntent.PROCESS_RELATED, 0.75
+        else:
+            logger.debug("[Context Check] No assistant message found in history")
+    
+    # Fallback: Standard-Klassifikation ohne Kontext
+    return classify_query(query)
+

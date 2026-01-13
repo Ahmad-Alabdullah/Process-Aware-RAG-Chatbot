@@ -43,6 +43,12 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
   const streamedContentRef = useRef("");
   const metadataRef = useRef<{ context: EvidenceChunk[]; gating_mode: string } | null>(null);
   const lastRequestRef = useRef<{ content: string; chatId: string } | null>(null);
+  const localMessagesRef = useRef<Message[]>([]);  // Ref to track current messages for closures
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    localMessagesRef.current = localMessages;
+  }, [localMessages]);
 
   // Sync local state with hook messages when chatId matches
   useEffect(() => {
@@ -106,12 +112,12 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
       setStreamStatus("connecting");
 
       try {
-        // Get chat history from STORE, not React state (closure issue)
-        // localMessages in this closure may be stale - use getMessages for fresh data
-        const currentMessages = getMessages(targetChatId);
+        // Use ref to get fresh messages (avoids closure stale state issue)
+        // localMessagesRef is always in sync with the current localMessages state
+        const currentMessages = localMessagesRef.current;
         const recentHistory = currentMessages.slice(-6).map(m => ({
           role: m.role as "user" | "assistant",
-          content: m.content.slice(0, 200), // Truncate to match backend
+          content: m.content.slice(0, 500), // Keep more chars for context check
         }));
         
         console.log("[DEBUG] Chat history being sent:", recentHistory.length, "messages", 

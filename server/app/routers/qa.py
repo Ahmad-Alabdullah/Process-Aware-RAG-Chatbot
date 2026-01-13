@@ -15,7 +15,7 @@ from app.services.query_reformulation import reformulate_query, should_reformula
 from app.core.clients import get_logger
 from app.core.config import settings
 from app.core.llm_config import LLMPresets
-from app.core.guardrails import classify_query, should_use_rag, get_fallback_response
+from app.core.guardrails import classify_query, classify_query_with_context, should_use_rag, get_fallback_response
 
 router = APIRouter(prefix="/api/qa")
 
@@ -255,8 +255,16 @@ def ask_stream(
     """
     logger.info("QA /ask/stream: query=%s", body.query[:50] if body.query else "")
 
-    # 0) Query Guardrail: Klassifiziere Query und filtere Off-Topic
-    intent, confidence = classify_query(body.query)
+    # 0) Query Guardrail: Klassifiziere Query mit Chat-Kontext für Folgefragen
+    # Konvertiere chat_history für Guardrail (falls vorhanden)
+    guardrail_history = None
+    if body.chat_history:
+        guardrail_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in body.chat_history
+        ]
+    
+    intent, confidence = classify_query_with_context(body.query, guardrail_history)
     logger.debug(f"Query intent: {intent.value} (confidence: {confidence})")
     
     if not should_use_rag(intent):
@@ -359,8 +367,9 @@ def ask_stream(
         for c in chunks
     ]
     
-    # Add BPMN process as source when gating provides process context
-    if gating.mode != GatingMode.NONE and body.process_name:
+    # Add BPMN process as source when gating provides actual BPMN process context
+    # (not for DOCS_ONLY which only uses process_name for filtering, no BPMN context)
+    if gating.mode in (GatingMode.PROCESS_CONTEXT, GatingMode.GATING_ENABLED) and body.process_name:
         bpmn_source = {
             "chunk_id": f"bpmn_{body.process_id or body.process_name}",
             "text": gating.prompt_hint[:300] if gating.prompt_hint else "Prozesskontext",
@@ -377,12 +386,17 @@ def ask_stream(
     
     context_text = "\n\n---\n\n".join(c["text"] for c in chunks)
 
-    # 4) Prompt
+    # 4) Prompt - only include gating_hint for modes that use BPMN context
+    gating_hint_for_prompt = (
+        gating.prompt_hint 
+        if gating.mode in (GatingMode.PROCESS_CONTEXT, GatingMode.GATING_ENABLED) 
+        else None
+    )
     prompt = build_prompt(
         style=body.prompt_style,
         body=body,
         context_text=context_text,
-        gating_hint=gating.prompt_hint,
+        gating_hint=gating_hint_for_prompt,
     )
 
     # 5) LLM Config (same pattern as regular /ask endpoint)

@@ -32,7 +32,9 @@ export function ScopeControl({
       aria-label="Kontext-Scope"
     >
       {options.map((option) => {
-        const isDisabled = disabled || (option.value === "step" && stepDisabled);
+        // Disable both "Prozess" and "Schritt" when no BPMN model exists
+        const needsBpmn = option.value === "overview" || option.value === "step";
+        const isDisabled = disabled || (needsBpmn && stepDisabled);
         const isSelected = value === option.value;
 
         return (

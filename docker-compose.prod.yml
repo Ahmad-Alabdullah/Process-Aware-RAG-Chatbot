@@ -126,7 +126,7 @@ services:
   # PostgreSQL Database
   # ============================================
   postgres:
-    image: postgres:16-alpine
+    image: postgres:latest
     container_name: neurapath-postgres
     restart: unless-stopped
     environment:
@@ -139,7 +139,7 @@ services:
     networks:
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d proto"]
       interval: 10s
       timeout: 5s
       retries: 5

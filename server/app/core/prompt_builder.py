@@ -155,6 +155,9 @@ def _build_baseline_prompt(
     """
     gating_block = _format_gating_block(gating_hint, "baseline")
     history_block = _format_chat_history(body)
+    
+    # Only mention BPMN-Prozess citation if we have gating context
+    bpmn_instruction = "- Zitiere Prozessinformationen mit [BPMN-Prozess].\n" if gating_hint else ""
 
     return f"""{SYSTEM_PROMPT_GATING if gating_hint else SYSTEM_PROMPT_DE}
 {history_block}
@@ -167,8 +170,8 @@ def _build_baseline_prompt(
 
 ### Antwort
 Beantworte die Frage präzise und vollständig auf Deutsch.
-- Zitiere Dokumente mit [1], [2], etc.
-- Zitiere Prozessinformationen mit [BPMN-Prozess].
+- Zitiere Dokumente mit [1], [2], etc. und gib wenn möglich den Abschnitt oder die Überschrift an (z.B. "[1] (Abschnitt: Bezugszeitraum)").
+{bpmn_instruction}- Erstelle am Ende einen kurzen Quellen-Überblick mit den Themen der zitierten Abschnitte.
 - Strukturiere die Antwort klar und übersichtlich.
 - Wenn Informationen fehlen, sage: "Basierend auf den vorliegenden Dokumenten kann ich dazu keine Aussage treffen."
 
@@ -280,6 +283,10 @@ def _build_cot_prompt(
     """
     gating_block = _format_gating_block(gating_hint, "cot")
     history_block = _format_chat_history(body)
+    
+    # Only mention BPMN-Prozess citation if we have gating context
+    bpmn_instruction = "- Mit [BPMN-Prozess] auf Prozessinformationen verweisen\n" if gating_hint else ""
+    process_context_line = "- Prozesskontext: ...\n" if gating_hint else ""
 
     return f"""{SYSTEM_PROMPT_GATING if gating_hint else SYSTEM_PROMPT_DE}
 {history_block}
@@ -291,20 +298,19 @@ def _build_cot_prompt(
 {body.query}
 
 ### Anleitung
-Beantworte die Frage basierend auf den Dokumenten und dem Prozesskontext.
+Beantworte die Frage basierend auf den Dokumenten.
 Nutze <think>...</think> für deine internen Überlegungen - dieser Teil wird dem Nutzer NICHT gezeigt.
 Nach </think> kommt nur die finale Antwort für den Nutzer.
 
 Die Antwort soll:
 - Präzise und strukturiert sein
-- Mit [1], [2], etc. auf Dokumente verweisen
-- Mit [BPMN-Prozess] auf Prozessinformationen verweisen
+- Mit [1], [2], etc. auf Dokumente verweisen und wenn möglich den Abschnitt oder die Überschrift angeben (z.B. "[1] (Abschnitt: Bezugszeitraum)")
+{bpmn_instruction}- Am Ende einen kurzen Quellen-Überblick mit den Themen der zitierten Abschnitte enthalten
 - Auf Deutsch formuliert sein
 
 <think>
 - Relevante Dokumente: ...
-- Prozesskontext: ...
-- Fehlende Informationen: ...
+{process_context_line}- Fehlende Informationen: ...
 </think>
 
 Antwort:"""

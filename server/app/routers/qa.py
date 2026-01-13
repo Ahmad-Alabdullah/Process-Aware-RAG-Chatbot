@@ -384,7 +384,12 @@ def ask_stream(
         }
         ctx.insert(0, bpmn_source)
     
-    context_text = "\n\n---\n\n".join(c["text"] for c in chunks)
+    # Number chunks by relevance order (from reranker) - [1] = most relevant
+    # Note: LLM numbers its own citations in the answer text independently
+    context_text = "\n\n---\n\n".join(
+        f"[Chunk {i+1}] Quelle: {c.get('metadata', {}).get('filename', 'Dokument')}\n{c['text']}"
+        for i, c in enumerate(chunks)
+    )
 
     # 4) Prompt - only include gating_hint for modes that use BPMN context
     gating_hint_for_prompt = (
@@ -392,12 +397,23 @@ def ask_stream(
         if gating.mode in (GatingMode.PROCESS_CONTEXT, GatingMode.GATING_ENABLED) 
         else None
     )
+    
+    # Use reformulated query for prompt (includes context from chat history)
+    original_query = body.query
+    body.query = search_input
+    
     prompt = build_prompt(
         style=body.prompt_style,
         body=body,
         context_text=context_text,
         gating_hint=gating_hint_for_prompt,
     )
+    
+    # Restore original query for logging/response
+    body.query = original_query
+    
+    # DEBUG: Log full prompt
+    logger.info(f"[DEBUG PROMPT] Full prompt:\n{'='*80}\n{prompt}\n{'='*80}")
 
     # 5) LLM Config (same pattern as regular /ask endpoint)
     if body.prompt_style == "cot":

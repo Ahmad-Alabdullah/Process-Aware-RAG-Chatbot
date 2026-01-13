@@ -13,26 +13,16 @@ from app.core.models.askModel import AskBody
 
 
 # ============================================================
-# SYSTEM PROMPTS (Rollen-Definition)
+# SYSTEM PROMPTS (Nur Rolle/Persona - Regeln unten bei Instruktion)
+# Nach "Lost in the Middle" (Liu et al., 2023): Kritische Instruktionen
+# sollten NAHE an der Frage platziert werden, nicht am Anfang.
 # ============================================================
 
 SYSTEM_PROMPT_DE = """Du bist ein Experte für Hochschulprozesse und Verwaltungsabläufe.
-Deine Aufgabe ist es, Fragen zu Prozessen, Richtlinien und Zuständigkeiten präzise zu beantworten.
-
-WICHTIGE REGELN:
-1. Antworte NUR basierend auf den bereitgestellten Dokumenten und dem Prozesskontext.
-2. Zitiere relevante Quellen mit [1], [2], etc.
-3. Wenn die Informationen nicht ausreichen, sage es ehrlich.
-4. Erfinde KEINE Informationen."""
+Deine Aufgabe ist es, Fragen zu Prozessen, Richtlinien und Zuständigkeiten präzise zu beantworten."""
 
 SYSTEM_PROMPT_GATING = """Du bist ein Prozessberater für Hochschulverwaltung.
-Du beantwortest Fragen im Kontext einer SPEZIFISCHEN Position im Prozess.
-
-WICHTIGE REGELN:
-1. Beachte den Prozesskontext (aktuelle Position, Rolle, erlaubte Schritte).
-2. Beschränke dich auf relevante Informationen für die aktuelle Situation.
-3. Zitiere Quellen mit [1], [2], etc.
-4. Erfinde KEINE Prozessschritte oder Zuständigkeiten."""
+Du beantwortest Fragen im Kontext einer SPEZIFISCHEN Position im Prozess."""
 
 
 # ============================================================
@@ -161,19 +151,26 @@ def _build_baseline_prompt(
 
     return f"""{SYSTEM_PROMPT_GATING if gating_hint else SYSTEM_PROMPT_DE}
 {history_block}
-### Relevante Dokumente
+### Relevante Dokumente (nach Relevanz sortiert, Chunk 1 = relevantester)
 {_format_context_block(context_text)}
 {gating_block}
 
 ### Frage
 {body.query}
 
-### Antwort
+### Anleitung
 Beantworte die Frage präzise und vollständig auf Deutsch.
-- Zitiere Dokumente mit [1], [2], etc. und gib wenn möglich den Abschnitt oder die Überschrift an (z.B. "[1] (Abschnitt: Bezugszeitraum)").
-{bpmn_instruction}- Erstelle am Ende einen kurzen Quellen-Überblick mit den Themen der zitierten Abschnitte.
-- Strukturiere die Antwort klar und übersichtlich.
-- Wenn Informationen fehlen, sage: "Basierend auf den vorliegenden Dokumenten kann ich dazu keine Aussage treffen."
+
+**WICHTIG:**
+- Antworte NUR basierend auf den bereitgestellten Dokumenten.
+- Erfinde KEINE Informationen. Bei fehlenden Infos: "Basierend auf den vorliegenden Dokumenten kann ich dazu keine Aussage treffen."
+
+**Zitierregeln:**
+- Im Text nur Nummern: [1], [2], [3] usw. (KEINE Erklärung, KEINE Chunk-Nummern)
+{bpmn_instruction}- Am Ende: **Quellen-Überblick** mit Format: [Nummer] (Abschnittstitel, Dateiname)
+  Beispiel: [1] (Bezugszeitraum festlegen, Hinweisblatt.pdf)
+
+Strukturiere die Antwort klar und übersichtlich.
 
 Antwort:"""
 
@@ -290,7 +287,7 @@ def _build_cot_prompt(
 
     return f"""{SYSTEM_PROMPT_GATING if gating_hint else SYSTEM_PROMPT_DE}
 {history_block}
-### Relevante Dokumente
+### Relevante Dokumente (nach Relevanz sortiert, Chunk 1 = relevantester)
 {_format_context_block(context_text)}
 {gating_block}
 
@@ -302,11 +299,16 @@ Beantworte die Frage basierend auf den Dokumenten.
 Nutze <think>...</think> für deine internen Überlegungen - dieser Teil wird dem Nutzer NICHT gezeigt.
 Nach </think> kommt nur die finale Antwort für den Nutzer.
 
-Die Antwort soll:
-- Präzise und strukturiert sein
-- Mit [1], [2], etc. auf Dokumente verweisen und wenn möglich den Abschnitt oder die Überschrift angeben (z.B. "[1] (Abschnitt: Bezugszeitraum)")
-{bpmn_instruction}- Am Ende einen kurzen Quellen-Überblick mit den Themen der zitierten Abschnitte enthalten
-- Auf Deutsch formuliert sein
+**WICHTIG:**
+- Antworte NUR basierend auf den bereitgestellten Dokumenten.
+- Erfinde KEINE Informationen. Bei fehlenden Infos: "Basierend auf den vorliegenden Dokumenten kann ich dazu keine Aussage treffen."
+
+**Zitierregeln:**
+- Im Text nur [1], [2], [3] usw. (KEINE Erklärung, KEINE Chunk-Nummern)
+{bpmn_instruction}- Am Ende: **Quellen-Überblick** mit Format: [Nummer] (Abschnittstitel, Dateiname)
+  Beispiel: [1] (Bezugszeitraum, Hinweisblatt.pdf)
+
+Strukturiere die Antwort präzise und auf Deutsch.
 
 <think>
 - Relevante Dokumente: ...

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, FileText, Workflow } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,36 +22,43 @@ export function Quellenstempel({
 }: QuellenstempelProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
-  if (!evidence || evidence.length === 0) return null;
+  // Group and deduplicate sources by filename
+  const sources = useMemo(() => {
+    if (!evidence || evidence.length === 0) return [];
+    
+    const byFile = new Map<string, { title: string; type: "DOC" | "BPMN" }>();
+    
+    for (const chunk of evidence) {
+      const sourceType = chunk.metadata?.source_type as string | undefined;
+      const isBpmn =
+        sourceType === "bpmn" ||
+        sourceType === "BPMN" ||
+        chunk.chunk_id?.includes("bpmn_");
+      
+      // Use filename as key for deduplication
+      const filename = 
+        (chunk.metadata?.filename as string) ||
+        (chunk.metadata?.title as string) ||
+        chunk.chunk_id ||
+        "Unbekannte Quelle";
+      
+      // Skip if already added (deduplication)
+      if (byFile.has(filename)) continue;
+      
+      byFile.set(filename, {
+        title: filename,
+        type: isBpmn ? "BPMN" : "DOC",
+      });
+    }
+    
+    // Convert to array and sort (BPMN first, then DOCs)
+    return Array.from(byFile.entries())
+      .map(([id, data]) => ({ id, ...data }))
+      .sort((a, b) => (a.type === "BPMN" ? -1 : b.type === "BPMN" ? 1 : 0));
+  }, [evidence]);
 
-  // Derive source info from evidence chunks
-  const sources = evidence.slice(0, 5).map((chunk, index) => {
-    // Try to extract source type and locator from metadata or chunk_id
-    const sourceType = chunk.metadata?.source_type as string | undefined;
-    const isBpmn =
-      sourceType === "bpmn" ||
-      sourceType === "BPMN" ||
-      chunk.chunk_id?.includes("bpmn") ||
-      chunk.chunk_id?.includes("node_");
-
-    const title =
-      (chunk.metadata?.title as string) ||
-      (chunk.metadata?.filename as string) ||
-      chunk.chunk_id ||
-      `Quelle ${index + 1}`;
-
-    const locator =
-      (chunk.metadata?.page as string) ||
-      (chunk.metadata?.section as string) ||
-      chunk.chunk_id?.split("_").slice(-1)[0];
-
-    return {
-      id: chunk.chunk_id || `source-${index}`,
-      title,
-      type: isBpmn ? ("BPMN" as const) : ("DOC" as const),
-      locator,
-    };
-  });
+  // Early return if no sources after deduplication
+  if (sources.length === 0) return null;
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -82,9 +89,6 @@ export function Quellenstempel({
             )}
             <div className="flex-1 min-w-0">
               <span className="truncate">{source.title}</span>
-              {source.locator && (
-                <span className="opacity-70"> · {source.locator}</span>
-              )}
             </div>
             <Badge
               variant="outline"

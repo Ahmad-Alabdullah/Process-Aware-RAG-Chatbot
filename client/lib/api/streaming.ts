@@ -64,7 +64,7 @@ export async function askQuestionStream(
   options: StreamOptions = {}
 ): Promise<void> {
   const {
-    connectionTimeoutMs = 30000,
+    connectionTimeoutMs = 90000,
     inactivityTimeoutMs = 90000,
     trackProgress = true,
   } = options;
@@ -179,26 +179,8 @@ export async function askQuestionStream(
   resetInactivityTimeout();
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) {
-        // Stream reader finished - just clean up, do NOT call onDone here
-        // onDone should ONLY be triggered by the SSE "event: done" to ensure
-        // all prior events (metadata, tokens) have been processed
-        if (inactivityTimeoutId) clearTimeout(inactivityTimeoutId);
-        break;
-      }
-
-      // Reset inactivity timer on each chunk
-      resetInactivityTimeout();
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // Parse SSE events
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || ""; // Keep incomplete line in buffer
-
+    // Helper function to parse SSE events from lines
+    const parseSSELines = (lines: string[]) => {
       let eventType = "";
       let eventData = "";
 
@@ -216,7 +198,6 @@ export async function askQuestionStream(
                 callbacks.onMetadata?.(parsed as StreamMetadata);
               } else if (eventType === "token") {
                 tokenCount++;
-                // Report streaming status on first token
                 if (tokenCount === 1) {
                   reportProgress("streaming");
                 }
@@ -242,6 +223,32 @@ export async function askQuestionStream(
           }
         }
       }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        // Stream reader finished - process any remaining buffer content
+        // This is critical for fast responses where events may still be in buffer
+        if (buffer.trim()) {
+          const remainingLines = buffer.split("\n");
+          parseSSELines(remainingLines);
+        }
+        if (inactivityTimeoutId) clearTimeout(inactivityTimeoutId);
+        break;
+      }
+
+      // Reset inactivity timer on each chunk
+      resetInactivityTimeout();
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE events
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+      parseSSELines(lines);
     }
   } catch (error) {
     if (inactivityTimeoutId) clearTimeout(inactivityTimeoutId);

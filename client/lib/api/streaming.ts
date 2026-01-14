@@ -65,7 +65,7 @@ export async function askQuestionStream(
 ): Promise<void> {
   const {
     connectionTimeoutMs = 30000,
-    inactivityTimeoutMs = 60000,
+    inactivityTimeoutMs = 90000,
     trackProgress = true,
   } = options;
 
@@ -183,9 +183,10 @@ export async function askQuestionStream(
       const { done, value } = await reader.read();
 
       if (done) {
+        // Stream reader finished - just clean up, do NOT call onDone here
+        // onDone should ONLY be triggered by the SSE "event: done" to ensure
+        // all prior events (metadata, tokens) have been processed
         if (inactivityTimeoutId) clearTimeout(inactivityTimeoutId);
-        reportProgress("done");
-        callbacks.onDone?.();
         break;
       }
 

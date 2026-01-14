@@ -236,8 +236,10 @@ export async function askQuestionStream(
       if (done) {
         // Stream reader finished - process any remaining buffer content
         // This is critical for fast responses where events may still be in buffer
+        console.log("[SSE DEBUG] Stream done, remaining buffer:", buffer.substring(0, 200));
         if (buffer.trim()) {
           const remainingLines = buffer.split("\n");
+          console.log("[SSE DEBUG] Parsing remaining buffer lines:", remainingLines.length);
           parseSSELines(remainingLines);
         }
         if (inactivityTimeoutId) clearTimeout(inactivityTimeoutId);
@@ -248,6 +250,12 @@ export async function askQuestionStream(
       resetInactivityTimeout();
 
       buffer += decoder.decode(value, { stream: true });
+      
+      // Debug: Log first chunk to see if metadata is there
+      if (tokenCount === 0) {
+        console.log("[SSE DEBUG] First chunk received, buffer length:", buffer.length);
+        console.log("[SSE DEBUG] Buffer starts with:", buffer.substring(0, 200));
+      }
 
       // Parse SSE events
       const lines = buffer.split("\n");

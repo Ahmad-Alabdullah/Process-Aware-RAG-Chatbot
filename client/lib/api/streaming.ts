@@ -195,6 +195,10 @@ export async function askQuestionStream(
               const parsed = JSON.parse(eventData);
 
               if (eventType === "metadata") {
+                console.log("[SSE DEBUG] Parsed metadata event:", {
+                  contextLength: (parsed as StreamMetadata).context?.length,
+                  gatingMode: (parsed as StreamMetadata).gating_mode,
+                });
                 callbacks.onMetadata?.(parsed as StreamMetadata);
               } else if (eventType === "token") {
                 tokenCount++;
@@ -203,6 +207,7 @@ export async function askQuestionStream(
                 }
                 callbacks.onToken?.(parsed as string);
               } else if (eventType === "done") {
+                console.log("[SSE DEBUG] Parsed done event");
                 if (inactivityTimeoutId) clearTimeout(inactivityTimeoutId);
                 reportProgress("done");
                 callbacks.onDone?.();

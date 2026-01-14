@@ -133,6 +133,12 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
         // Stream response from backend
         await askQuestionStream(request, {
           onMetadata: (metadata) => {
+            // Debug: Log metadata receipt
+            if (!metadata.context || metadata.context.length === 0) {
+              console.warn("[PROD DEBUG] onMetadata received with EMPTY context!", metadata);
+            } else {
+              console.log("[PROD DEBUG] onMetadata received:", metadata.context.length, "chunks");
+            }
             metadataRef.current = {
               context: metadata.context,
               gating_mode: metadata.gating_mode,
@@ -148,6 +154,13 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
             refreshLocalMessages(targetChatId);
           },
           onDone: () => {
+            // Debug: Log state when onDone fires
+            console.log("[PROD DEBUG] onDone called:", {
+              hasMetadata: !!metadataRef.current,
+              contextLength: metadataRef.current?.context?.length || 0,
+              gatingMode: metadataRef.current?.gating_mode,
+            });
+            
             const context = metadataRef.current?.context || [];
             const gatingMode = metadataRef.current?.gating_mode;
             
@@ -155,6 +168,8 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
             const confidence = gatingMode === "guardrail" 
               ? undefined 
               : computeAnswerConfidence(context);
+            
+            console.log("[PROD DEBUG] Confidence computed:", confidence?.score, "from", context.length, "chunks");
 
             // Update final message with evidence and confidence
             updateLastMessageApi(targetChatId, {

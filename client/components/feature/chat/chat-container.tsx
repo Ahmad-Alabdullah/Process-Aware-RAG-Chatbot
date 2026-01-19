@@ -80,7 +80,9 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
         const newChat = createChat(content.slice(0, 50));
         targetChatId = newChat.id;
         setActiveChatIdState(targetChatId);
-        router.push(`/chat/${newChat.id}`);
+        // Use router.replace to update URL without full navigation
+        // scroll:false prevents scroll reset, keeps component mounted
+        router.replace(`/chat/${newChat.id}`, { scroll: false });
       }
 
       // Store request for potential retry
@@ -125,7 +127,7 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
 
         // Build request with context and history
         const request = buildAskRequest(content, contextState.state, {
-          use_rerank: true,
+          use_rerank: false,
           top_k: 5,
           chat_history: recentHistory.length > 0 ? recentHistory : undefined,
         });

@@ -163,12 +163,21 @@ Beantworte die Frage präzise und vollständig auf Deutsch.
 
 **WICHTIG:**
 - Antworte NUR basierend auf den bereitgestellten Dokumenten.
-- Erfinde KEINE Informationen. Bei fehlenden Infos: "Basierend auf den vorliegenden Dokumenten kann ich dazu keine Aussage treffen."
+- Erfinde KEINE Informationen.
+- NUR falls die Dokumente KEINE relevanten Informationen enthalten, antworte mit: "Dazu liegen mir keine Informationen vor."
+- Füge diesen Satz niemals hinzu, wenn du bereits eine Antwort gegeben hast!
 
-**Zitierregeln:**
-- Im Text nur Nummern: [1], [2], [3] usw. (KEINE Erklärung, KEINE Chunk-Nummern)
-{bpmn_instruction}- Am Ende: **Quellen-Überblick** mit Format: [Nummer] (Abschnittstitel, Dateiname)
-  Beispiel: [1] (Bezugszeitraum festlegen, Hinweisblatt.pdf)
+**Zitierregeln (SEHR WICHTIG):**
+- Jede wichtige Aussage oder Information aus den Dokumenten bekommt eine fortlaufende Nummer: [1], [2], [3], usw.
+- Die Nummern sind fortlaufend (1, 2, 3...) und zählen die Anzahl der Zitate insgesamt.
+- KEINE Chunk-Nummern, KEINE Seitenzahlen, KEINE Abschnittsnummern im Text!
+{bpmn_instruction}
+- Am Ende MUSS ein **Quellen-Überblick** stehen mit ALLEN verwendeten Nummern:
+  Format: [Nummer] (Überschrift oder Abschnittstitel, Dateiname.pdf)
+  Beispiel:
+  [1] (Antragsformular ausfüllen, Hinweisblatt.pdf)
+  [2] (Absprache mit Dekan, Merkblatt.pdf)
+  [3] (Genehmigungsverfahren, Richtlinie.pdf)
 
 Strukturiere die Antwort klar und übersichtlich.
 
@@ -301,12 +310,20 @@ Nach </think> kommt nur die finale Antwort für den Nutzer.
 
 **WICHTIG:**
 - Antworte NUR basierend auf den bereitgestellten Dokumenten.
-- Erfinde KEINE Informationen. Bei fehlenden Infos: "Basierend auf den vorliegenden Dokumenten kann ich dazu keine Aussage treffen."
+- Erfinde KEINE Informationen.
+- NUR falls die Dokumente KEINE relevanten Informationen enthalten, antworte mit: "Dazu liegen mir keine Informationen vor."
+- Füge diesen Satz niemals hinzu, wenn du bereits eine Antwort gegeben hast!
 
-**Zitierregeln:**
-- Im Text nur [1], [2], [3] usw. (KEINE Erklärung, KEINE Chunk-Nummern)
-{bpmn_instruction}- Am Ende: **Quellen-Überblick** mit Format: [Nummer] (Abschnittstitel, Dateiname)
-  Beispiel: [1] (Bezugszeitraum, Hinweisblatt.pdf)
+**Zitierregeln (SEHR WICHTIG):**
+- Jede wichtige Aussage oder Information aus den Dokumenten bekommt eine fortlaufende Nummer: [1], [2], [3], usw.
+- Die Nummern sind fortlaufend (1, 2, 3...) und zählen die Anzahl der Zitate insgesamt.
+- KEINE Chunk-Nummern, KEINE Seitenzahlen, KEINE Abschnittsnummern im Text!
+{bpmn_instruction}
+- Am Ende MUSS ein **Quellen-Überblick** stehen mit ALLEN verwendeten Nummern:
+  Format: [Nummer] (Überschrift oder Abschnittstitel, Dateiname.pdf)
+  Beispiel:
+  [1] (Antragsformular ausfüllen, Hinweisblatt.pdf)
+  [2] (Absprache mit Dekan, Merkblatt.pdf)
 
 Strukturiere die Antwort präzise und auf Deutsch.
 

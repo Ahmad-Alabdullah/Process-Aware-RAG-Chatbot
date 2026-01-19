@@ -420,6 +420,9 @@ def ask_stream(
         llm_config = LLMPresets.chain_of_thought(model=body.model or settings.OLLAMA_MODEL)
     else:
         llm_config = LLMPresets.rag_qa(model=body.model or settings.OLLAMA_MODEL)
+    
+    # Log the model being used
+    logger.info(f"Using LLM model: {llm_config.model}")
 
     # Temperature Override falls angegeben
     if temperature is not None:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
+
 import { ChatSidebar } from "@/components/feature/chat/chat-sidebar";
 import { ChatView } from "@/components/feature/chat/chat-view";
 import { Composer } from "@/components/feature/chat/composer";
@@ -29,7 +29,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({ chatId }: ChatContainerProps) {
-  const router = useRouter();
+
   const { createChat, refreshChats } = useChats();
   const { messages: hookMessages, refreshMessages } = useChatMessages(chatId || null);
   const contextState = useContextState();
@@ -71,18 +71,18 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
   const refreshLocalMessages = useCallback((targetChatId: string) => {
     setLocalMessages(getMessages(targetChatId));
   }, []);
-
   const handleSend = useCallback(
     async (content: string) => {
       // Create new chat if needed
-      let targetChatId = chatId;
+      // Use chatId prop OR activeChatIdState (for when URL was updated via history.replaceState)
+      let targetChatId = chatId || activeChatIdState;
       if (!targetChatId) {
         const newChat = createChat(content.slice(0, 50));
         targetChatId = newChat.id;
         setActiveChatIdState(targetChatId);
-        // Use router.replace to update URL without full navigation
-        // scroll:false prevents scroll reset, keeps component mounted
-        router.replace(`/chat/${newChat.id}`, { scroll: false });
+        // Use native history API to update URL without triggering React navigation
+        // router.replace still causes remount even with catch-all routes
+        window.history.replaceState(null, "", `/chat/${newChat.id}`);
       }
 
       // Store request for potential retry
@@ -226,7 +226,7 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
         setStreamStatus(undefined);
       }
     },
-    [chatId, createChat, refreshChats, router, contextState.state, refreshLocalMessages]
+    [chatId, activeChatIdState, createChat, refreshChats, contextState.state, refreshLocalMessages]
   );
 
   // Use local messages which are always up-to-date
@@ -236,9 +236,11 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
     <ResizablePanelGroup
       direction="horizontal"
       className="h-screen bg-background"
+      id="chat-panel-group"
     >
       {/* Resizable Sidebar Panel */}
       <ResizablePanel
+        id="sidebar-panel"
         defaultSize={20}
         minSize={15}
         maxSize={35}
@@ -250,7 +252,7 @@ export function ChatContainer({ chatId }: ChatContainerProps) {
       <ResizableHandle withHandle />
 
       {/* Main Chat Panel */}
-      <ResizablePanel defaultSize={80} minSize={50} className="min-w-0">
+      <ResizablePanel id="main-panel" defaultSize={80} minSize={50} className="min-w-0">
         <main className="flex h-full flex-col min-h-0 min-w-0">
           {/* Chat Messages*/}
           <ChatView messages={displayMessages} isLoading={isLoading} streamStatus={streamStatus} />

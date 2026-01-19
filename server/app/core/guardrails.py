@@ -42,6 +42,31 @@ Kategorien:
 Antworte NUR mit dem Kategorie-Namen (z.B. "PROCESS_RELATED")."""
 
 
+# LLM-Prompt für Verification von unsicheren Klassifikationen
+# Basiert auf "LLM as Judge" Pattern (GuardrailsAI, 2024)
+INTENT_VERIFICATION_PROMPT = """Überprüfe diese Klassifikation einer Benutzeranfrage.
+
+Anfrage: "{query}"
+Vorläufige Klassifikation: {initial_intent}
+
+WICHTIG: Sei PERMISSIV. Im Zweifel sollte die Query als prozessbezogen behandelt werden.
+
+Prüfe:
+1. Ist die Anfrage wirklich {initial_intent_description}?
+2. Oder könnte es eine (auch implizite) Frage zu Hochschulprozessen sein?
+3. Enthält die Anfrage Hinweise auf Verwaltungsthemen (auch wenn versteckt)?
+
+Antworte mit GENAU einem Wort:
+- CONFIRM: Die Klassifikation "{initial_intent}" ist korrekt
+- OVERRIDE: Die Anfrage ist doch PROCESS_RELATED (prozessbezogen)"""
+
+
+# Confidence-Threshold für LLM-Verification
+# Klassifikationen unter diesem Wert werden durch LLM nachgeprüft
+# Basiert auf "Hybrid NLU/LLM Intent Classification" (Voiceflow, 2024)
+LLM_VERIFICATION_THRESHOLD = 0.90
+
+
 # Freundliche Fallback-Antworten für Non-RAG Queries (Deutsch)
 FALLBACK_RESPONSES = {
     QueryIntent.GREETING: (
@@ -190,8 +215,75 @@ def classify_query_with_llm(query: str) -> Tuple[QueryIntent, float]:
     except Exception as e:
         logger.warning(f"LLM classification failed: {e}")
     
-    # Fallback: assume process-related
+    # Fallback: assume process-related (permissiv)
     return QueryIntent.PROCESS_RELATED, 0.5
+
+
+# Beschreibungen für Intent-Typen (für Verification-Prompt)
+INTENT_DESCRIPTIONS = {
+    QueryIntent.GREETING: "eine reine Begrüßung ohne Frage",
+    QueryIntent.CHITCHAT: "Smalltalk ohne Bezug zu Hochschulprozessen",
+    QueryIntent.OFF_TOPIC: "eine Frage zu einem komplett anderen Thema",
+    QueryIntent.UNCLEAR: "eine unklare oder zu kurze Anfrage",
+}
+
+
+def verify_with_llm(query: str, initial_intent: QueryIntent, confidence: float) -> Tuple[QueryIntent, float]:
+    """
+    LLM-Verification für unsichere Pattern-Klassifikationen.
+    
+    Basiert auf "LLM as Judge" Pattern (GuardrailsAI, 2024):
+    - Pattern-Match mit niedriger Confidence wird durch LLM nachgeprüft
+    - LLM kann die Entscheidung überschreiben (zu PROCESS_RELATED)
+    - Permissiver Ansatz: Im Zweifel → prozessbezogen
+    
+    Args:
+        query: Die Benutzeranfrage
+        initial_intent: Die Pattern-basierte Klassifikation
+        confidence: Die Confidence der Pattern-Klassifikation
+        
+    Returns:
+        Tuple[QueryIntent, float]: Finale Intent-Klassifikation mit Confidence
+    """
+    from app.services.llm import generate
+    from app.core.llm_config import LLMPresets
+    
+    # Nur Non-PROCESS Klassifikationen werden verifiziert
+    if initial_intent == QueryIntent.PROCESS_RELATED:
+        return initial_intent, confidence
+    
+    # Hohe Confidence → keine Verification nötig
+    if confidence >= LLM_VERIFICATION_THRESHOLD:
+        logger.debug(f"Skipping LLM verification: confidence {confidence} >= threshold {LLM_VERIFICATION_THRESHOLD}")
+        return initial_intent, confidence
+    
+    logger.info(f"LLM verification triggered for '{query[:50]}...' (intent={initial_intent.name}, conf={confidence})")
+    
+    try:
+        prompt = INTENT_VERIFICATION_PROMPT.format(
+            query=query,
+            initial_intent=initial_intent.name,
+            initial_intent_description=INTENT_DESCRIPTIONS.get(initial_intent, "unbekannt")
+        )
+        
+        response = generate(prompt, LLMPresets.fast_classification())
+        response = response.strip().upper()
+        
+        if "OVERRIDE" in response:
+            logger.info(f"LLM OVERRIDE: '{query[:50]}...' is PROCESS_RELATED (was {initial_intent.name})")
+            return QueryIntent.PROCESS_RELATED, 0.8
+        elif "CONFIRM" in response:
+            logger.debug(f"LLM CONFIRM: '{query[:50]}...' is {initial_intent.name}")
+            return initial_intent, min(confidence + 0.1, 0.95)  # Boost confidence after LLM confirmation
+        else:
+            logger.warning(f"LLM verification unclear response: {response}")
+            # Bei unklarer Antwort: Permissiv → PROCESS_RELATED
+            return QueryIntent.PROCESS_RELATED, 0.6
+            
+    except Exception as e:
+        logger.warning(f"LLM verification failed: {e}")
+        # Bei Fehler: Permissiv → PROCESS_RELATED
+        return QueryIntent.PROCESS_RELATED, 0.5
 
 
 def should_use_rag(intent: QueryIntent) -> bool:
@@ -219,11 +311,17 @@ def classify_query_with_context(
     chat_history: Optional[List[dict]] = None
 ) -> Tuple[QueryIntent, float]:
     """
-    Kontext-bewusste Query-Klassifikation für Folgefragen.
+    Kontext-bewusste Query-Klassifikation mit LLM-Verification.
     
-    Basiert auf Best Practice aus "Contextual Query Understanding in RAG" (2025):
-    - Folgefragen nach substantiellen RAG-Antworten sind wahrscheinlich prozessbezogen
-    - Vermeidet False Positives bei elliptischen Folgefragen
+    Hybrid-Ansatz basiert auf:
+    - "Contextual Query Understanding in RAG" (2025)
+    - "Hybrid NLU/LLM Intent Classification" (Voiceflow, 2024)
+    - "LLM as Judge" Pattern (GuardrailsAI, 2024)
+    
+    Flow:
+    1. Context-Check (Follow-up Patterns, Chat-History)
+    2. Pattern-basierte Klassifikation
+    3. LLM-Verification für unsichere Non-PROCESS Klassifikationen
     
     Args:
         query: Die aktuelle Benutzeranfrage
@@ -232,30 +330,70 @@ def classify_query_with_context(
     Returns:
         Tuple[QueryIntent, confidence]: Intent und Konfidenz
     """
-    # Wenn Chat-History existiert und letzte Antwort substantiell war,
-    # ist die Folgefrage wahrscheinlich auch prozessbezogen
+    query_lower = query.lower().strip()
+    
+    # Follow-up Patterns die auf Kontext-Bezug hindeuten
+    FOLLOWUP_PATTERNS = [
+        "nochmal", "noch mal", "nochmals", "erneut",
+        "kannst du", "könntest du", "können sie", "könnten sie",
+        "bitte prüfen", "bitte nochmal", "bitte noch mal",
+        "mehr dazu", "mehr informationen", "mehr details",
+        "genauer", "präziser", "ausführlicher",
+        "was meinst du", "wie meinst du",
+        "und was ist mit", "was ist mit",
+        "das verstehe ich nicht", "erkläre", "erklär",
+    ]
+    
     logger.info(f"[Context Check] chat_history: {len(chat_history) if chat_history else 0} messages")
     
+    # ========================================
+    # SCHRITT 1: Follow-up Pattern Check (hohe Priorität)
+    # ========================================
     if chat_history and len(chat_history) >= 2:
-        # Finde letzte Assistant-Nachricht
-        last_assistant = None
-        for msg in reversed(chat_history):
-            if msg.get("role") == "assistant":
-                last_assistant = msg
-                break
-        
-        if last_assistant:
-            content = last_assistant.get("content", "")
-            logger.info(f"[Context Check] Last assistant message: {len(content)} chars")
-            # Wenn vorherige Antwort >200 Zeichen → war substantielle RAG-Antwort
-            if len(content) > 200:
-                logger.info(
-                    f"Query '{query[:50]}...' bypassing guardrail (context: previous response was {len(content)} chars)"
-                )
-                return QueryIntent.PROCESS_RELATED, 0.75
-        else:
-            logger.debug("[Context Check] No assistant message found in history")
+        if len(query_lower) < 60:
+            for pattern in FOLLOWUP_PATTERNS:
+                if pattern in query_lower:
+                    logger.info(f"Query '{query[:50]}...' classified as PROCESS_RELATED (follow-up pattern: '{pattern}')")
+                    return QueryIntent.PROCESS_RELATED, 0.8
     
-    # Fallback: Standard-Klassifikation ohne Kontext
-    return classify_query(query)
+    # ========================================
+    # SCHRITT 2: Pattern-based Classification
+    # ========================================
+    intent, confidence = classify_query(query)
+    logger.info(f"[Pattern] Query classified as {intent.name} (conf={confidence})")
+    
+    # ========================================
+    # SCHRITT 3: Context-based Boost (nur für AMBIGE Fälle)
+    # ========================================
+    # WICHTIG: Klare Chitchat/Greeting Queries werden NICHT durch Context überschrieben
+    # Nur bei niedriger Confidence hilft der Context
+    if chat_history and len(chat_history) >= 2:
+        if intent != QueryIntent.PROCESS_RELATED and confidence < 0.85:
+            # Prüfe ob vorherige Antwort substantiell war
+            last_assistant = None
+            for msg in reversed(chat_history):
+                if msg.get("role") == "assistant":
+                    last_assistant = msg
+                    break
+            
+            if last_assistant:
+                content = last_assistant.get("content", "")
+                # Nur Context-Boost wenn wir unsicher sind UND vorherige Antwort RAG-artig war
+                if len(content) > 200:  # Höherer Threshold für Context-Boost
+                    logger.info(
+                        f"[Context Boost] Query '{query[:50]}...' upgraded to PROCESS_RELATED "
+                        f"(was {intent.name}, conf={confidence}, prev_response={len(content)} chars)"
+                    )
+                    return QueryIntent.PROCESS_RELATED, 0.7
+    
+    # ========================================
+    # SCHRITT 4: LLM Verification (Hybrid Approach)
+    # ========================================
+    # Nur Non-PROCESS Klassifikationen mit niedriger Confidence werden verifiziert
+    if intent != QueryIntent.PROCESS_RELATED and confidence < LLM_VERIFICATION_THRESHOLD:
+        logger.info(f"[Hybrid] Pattern classified as {intent.name} (conf={confidence}), triggering LLM verification")
+        final_intent, final_confidence = verify_with_llm(query, intent, confidence)
+        return final_intent, final_confidence
+    
+    return intent, confidence
 

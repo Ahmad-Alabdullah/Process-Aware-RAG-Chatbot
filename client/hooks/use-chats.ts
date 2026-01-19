@@ -21,26 +21,41 @@ export function useChats() {
   useEffect(() => {
     setChats(getChats());
     setIsLoading(false);
+    
+    // Listen for chat updates from other components
+    const handleChatUpdate = () => {
+      setChats(getChats());
+    };
+    window.addEventListener("chats-updated", handleChatUpdate);
+    return () => window.removeEventListener("chats-updated", handleChatUpdate);
   }, []);
 
   const createChat = useCallback((title?: string): Chat => {
     const chat = createChatApi(title);
     setChats(getChats());
+    // Notify other components
+    window.dispatchEvent(new Event("chats-updated"));
     return chat;
   }, []);
 
   const deleteChat = useCallback((chatId: string) => {
     deleteChatApi(chatId);
     setChats(getChats());
+    // Notify other components
+    window.dispatchEvent(new Event("chats-updated"));
   }, []);
 
   const renameChat = useCallback((chatId: string, title: string) => {
     updateChat(chatId, { title });
     setChats(getChats());
+    // Notify other components
+    window.dispatchEvent(new Event("chats-updated"));
   }, []);
 
   const refreshChats = useCallback(() => {
     setChats(getChats());
+    // Notify other components
+    window.dispatchEvent(new Event("chats-updated"));
   }, []);
 
   return {

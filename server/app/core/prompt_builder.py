@@ -314,7 +314,7 @@ Nach </think> kommt nur die finale Antwort für den Nutzer.
 - NUR falls die Dokumente KEINE relevanten Informationen enthalten, antworte mit: "Dazu liegen mir keine Informationen vor."
 - Füge diesen Satz niemals hinzu, wenn du bereits eine Antwort gegeben hast!
 
-**Zitierregeln (SEHR WICHTIG):**
+**Zitierregeln (SEHR WICHTIG und PFLICHT):**
 - Jede wichtige Aussage oder Information aus den Dokumenten bekommt eine fortlaufende Nummer: [1], [2], [3], usw.
 - Die Nummern sind fortlaufend (1, 2, 3...) und zählen die Anzahl der Zitate insgesamt.
 - KEINE Chunk-Nummern, KEINE Seitenzahlen, KEINE Abschnittsnummern im Text!

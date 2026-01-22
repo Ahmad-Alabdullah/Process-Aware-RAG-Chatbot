@@ -105,14 +105,17 @@ CHITCHAT_PATTERNS = [
     # Spezifischere Patterns - keine kurzen Substrings mehr
     "wie geht es", "wie gehts", "wie gehts dir", "wie steht es", "wie stehts",
     "was machst du", "wer bist du", "wie heißt du", "was kannst du", "was bist du",
-    "erzähl mir was", "erzähl mir etwas",
 ]
 
 # Process-Keywords für schnelle positive Klassifikation
 PROCESS_KEYWORDS = [
     # HR/Personal
     "elternzeit", "mutterschutz", "dienstreise", "urlaub", "krankmeldung",
-    "arbeitszeit", "teilzeit", "homeoffice", "gehalt", "lohn",
+    "arbeitszeit", "teilzeit", "homeoffice", "gehalt", "lohn", "ALPAKA", 
+    "Mentoring", "Projekt", "Professor", "Tandemprogramm", "Onboarding",
+    "Evaluation", "Feedback", "Akkreditierung", "Studiengang", "Qualitätsmanagement",
+    "Qualifikation", "Qualifizierung", "HAWKarriere", "HAW", "Mentees", "Mentor",
+    "Benefits", 
     # Anträge
     "antrag", "formular", "genehmigung", "unterschrift", "freigabe",
     # Prozesse

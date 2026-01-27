@@ -15,7 +15,7 @@ from app.services.query_reformulation import reformulate_query, should_reformula
 from app.core.clients import get_logger
 from app.core.config import settings
 from app.core.llm_config import LLMPresets
-from app.core.guardrails import classify_query, classify_query_with_context, should_use_rag, get_fallback_response
+from app.core.guardrails import classify_query, classify_query_with_context, should_use_rag, get_fallback_response, GuardrailMode, QueryIntent
 
 router = APIRouter(prefix="/api/qa")
 
@@ -264,7 +264,10 @@ def ask_stream(
             for msg in body.chat_history
         ]
     
-    intent, confidence = classify_query_with_context(body.query, guardrail_history)
+    # Parse guardrail mode from request
+    guardrail_mode = GuardrailMode(body.guardrail_mode) if body.guardrail_mode in [m.value for m in GuardrailMode] else GuardrailMode.HYBRID
+    
+    intent, confidence = classify_query_with_context(body.query, guardrail_history, mode=guardrail_mode)
     logger.debug(f"Query intent: {intent.value} (confidence: {confidence})")
     
     if not should_use_rag(intent):
@@ -308,7 +311,9 @@ def ask_stream(
         force_process_context=body.force_process_context,
     )
 
-    # 2) History-Aware Query Reformulation (for follow-up questions)
+    # 2) Intent-basierte Query Reformulation
+    #    FOLLOWUP → braucht Reformulation mit Chat-Context
+    #    PROCESS_RELATED → eigenständige Frage, keine Reformulation nötig
     search_input = body.query
     
     # DEBUG: Log incoming chat history
@@ -319,12 +324,13 @@ def ask_stream(
     else:
         logger.info("[DEBUG] No chat_history received")
     
-    if should_reformulate(body.query, body.chat_history):
-        logger.info(f"[DEBUG] should_reformulate=True for query: '{body.query}'")
+    # Intent-basierte Reformulation (statt Heuristik)
+    if intent == QueryIntent.FOLLOWUP:
+        logger.info(f"[Intent-Based] FOLLOWUP detected, reformulating query")
         search_input = reformulate_query(body.query, body.chat_history)
         logger.info(f"Query reformulated: '{body.query}' -> '{search_input}'")
     else:
-        logger.info(f"[DEBUG] should_reformulate=False for query: '{body.query}'")
+        logger.info(f"[Intent-Based] {intent.name} - no reformulation needed")
     
     # 3) Optional HyDE (on reformulated query)
     if body.use_hyde:

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List, Literal
 import os, uuid, shutil, json
 import aiofiles
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
 from app.core.clients import get_redis
 from app.services.pipeline import (
     ChunkingStrategy,
@@ -117,16 +117,22 @@ def delete_all_chunks():
     "/process/{process_name}",
     summary="Alle Chunks zu einem process_name in OS & Qdrant löschen",
 )
-def delete_chunks_by_process(process_name: str):
+def delete_chunks_by_process(
+    process_name: str,
+    os_index: str | None = Query(None, description="OpenSearch Index (default: aus .env)"),
+    qdrant_collection: str | None = Query(None, description="Qdrant Collection (default: aus .env)"),
+):
     if not process_name:
         raise HTTPException(status_code=400, detail="process_name darf nicht leer sein")
 
-    deleted_os = delete_chunks_by_process_opensearch(process_name)
-    delete_chunks_by_process_qdrant(process_name)
+    deleted_os = delete_chunks_by_process_opensearch(process_name, os_index=os_index)
+    delete_chunks_by_process_qdrant(process_name, qdrant_collection=qdrant_collection)
 
     return {
         "ok": True,
         "process_name": process_name,
+        "os_index": os_index or "default",
+        "qdrant_collection": qdrant_collection or "default",
         "opensearch_deleted": deleted_os,
         "qdrant": "delete by filter(process_name) requested",
     }
@@ -136,16 +142,22 @@ def delete_chunks_by_process(process_name: str):
     "/tag/{tag}",
     summary="Alle Chunks zu einem Tag in OS & Qdrant löschen",
 )
-def delete_chunks_by_tag(tag: str):
+def delete_chunks_by_tag(
+    tag: str,
+    os_index: str | None = Query(None, description="OpenSearch Index (default: aus .env)"),
+    qdrant_collection: str | None = Query(None, description="Qdrant Collection (default: aus .env)"),
+):
     if not tag:
         raise HTTPException(status_code=400, detail="tag darf nicht leer sein")
 
-    deleted_os = delete_chunks_by_tag_opensearch(tag)
-    delete_chunks_by_tag_qdrant(tag)
+    deleted_os = delete_chunks_by_tag_opensearch(tag, os_index=os_index)
+    delete_chunks_by_tag_qdrant(tag, qdrant_collection=qdrant_collection)
 
     return {
         "ok": True,
         "tag": tag,
+        "os_index": os_index or "default",
+        "qdrant_collection": qdrant_collection or "default",
         "opensearch_deleted": deleted_os,
         "qdrant": "delete by filter(tag) requested",
     }

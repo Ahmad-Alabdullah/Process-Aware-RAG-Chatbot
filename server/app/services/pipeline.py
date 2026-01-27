@@ -35,11 +35,27 @@ SEMANTIC_MIN_CHUNK_CHARS = 100
 
 
 def _get_index_names(strategy: ChunkingStrategy) -> Tuple[str, str]:
-    """Gibt (os_index, qdrant_collection) basierend auf Strategie zurück."""
+    """
+    Gibt (os_index, qdrant_collection) basierend auf Strategie und Embedding-Backend zurück.
+    
+    Bei Ollama-Backend werden automatisch die Qwen3-Indizes verwendet, um
+    Dimensionen-Mismatch zu vermeiden.
+    """
+    use_qwen3 = settings.EMBEDDING_BACKEND == "ollama"
+    
     if strategy == ChunkingStrategy.SEMANTIC:
+        if use_qwen3:
+            # Ollama: Verwende Qwen3-Indizes
+            return settings.OS_QWEN3_INDEX.replace("chunks_qwen3", "chunks_semantic_qwen3"), \
+                   settings.QDRANT_QWEN3_COLLECTION.replace("chunks_qwen3", "chunks_semantic_qwen3")
         return settings.OS_SEMANTIC_INDEX, settings.QDRANT_SEMANTIC_COLLECTION
+    
     if strategy == ChunkingStrategy.SENTENCE_SEMANTIC:
         return settings.OS_SEMANTIC_SENTENCE_QWEN3_INDEX, settings.QDRANT_SEMANTIC_SENTENCE_QWEN3_COLLECTION
+    
+    # BY_TITLE
+    if use_qwen3:
+        return settings.OS_QWEN3_INDEX, settings.QDRANT_QWEN3_COLLECTION
     return settings.OS_INDEX, settings.QDRANT_COLLECTION
 
 
@@ -96,15 +112,88 @@ def extract_payload(el) -> dict:
     return payload
 
 
+def _is_form_table(html: str) -> bool:
+    """
+    Erkennt ob eine HTML-Tabelle ein Formular ist (statt einer Datentabelle).
+    
+    Formulare werden erkannt anhand von:
+    - Hoher Anteil leerer Zellen (> 40%)
+    - Checkbox-Symbole (☐ □ ○ ☑ ☒)
+    - Label-Pattern in erster Spalte (Text endet mit : oder *)
+    """
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    
+    cells = soup.find_all(["td", "th"])
+    if not cells:
+        return False
+    
+    total = len(cells)
+    empty = sum(1 for c in cells if not c.get_text(strip=True))
+    
+    # Heuristik 1: > 40% leere Zellen → wahrscheinlich Formular
+    if total > 0 and empty / total > 0.4:
+        return True
+    
+    # Heuristik 2: Checkbox-Symbole vorhanden
+    text = soup.get_text()
+    checkbox_symbols = ["☐", "□", "○", "☑", "☒", "◯", "◻"]
+    if any(sym in text for sym in checkbox_symbols):
+        return True
+    
+    # Heuristik 3: Label-Pattern (erste Spalte endet mit : oder *)
+    rows = soup.find_all("tr")
+    if rows:
+        first_col_cells = [row.find(["td", "th"]) for row in rows]
+        first_col_cells = [c for c in first_col_cells if c]
+        if first_col_cells:
+            labels = sum(
+                1 for c in first_col_cells 
+                if c.get_text(strip=True).rstrip().endswith((":", "*"))
+            )
+            if labels / len(first_col_cells) > 0.5:
+                return True
+    
+    return False
+
+
 def _table_html_to_text(html: str) -> str:
-    """Konvertiert HTML-Tabelle in lesbaren Text."""
+    """
+    Konvertiert HTML-Tabelle in lesbaren Markdown-Text.
+    
+    - Überspringt Formulare (erkannt durch _is_form_table)
+    - Filtert leere Zeilen heraus
+    - Fügt Markdown-Header-Separator hinzu
+    - Gibt leeren String zurück wenn Tabelle nur leere Zellen hat
+    """
+    # Formulare überspringen
+    if _is_form_table(html):
+        return ""
+    
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
     rows = []
+    
     for tr in soup.find_all("tr"):
         cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-        rows.append(" | ".join(cells))
+        # Nur Zeilen mit mindestens einer nicht-leeren Zelle
+        if any(cell.strip() for cell in cells):
+            rows.append(" | ".join(cells))
+    
+    # Keine verwertbaren Daten
+    if not rows:
+        return ""
+    
+    # Markdown-Tabelle mit Header-Separator
+    if len(rows) >= 1:
+        # Anzahl Spalten aus erster Zeile
+        num_cols = len(rows[0].split(" | "))
+        separator = " | ".join(["---"] * num_cols)
+        # Header + Separator + Rest
+        result = [rows[0], separator] + rows[1:] if len(rows) > 1 else [rows[0]]
+        return "\n".join(result)
+    
     return "\n".join(rows)
 
 
@@ -228,7 +317,11 @@ def _semantic_chunk(
         if element_type == "Table":
             html = getattr(getattr(el, "metadata", None), "text_as_html", None)
             if html:
-                txt = _table_html_to_text(html) or txt
+                table_text = _table_html_to_text(html)
+                if table_text:  # Nur nicht-leere Tabellen verwenden
+                    txt = table_text
+                else:
+                    continue  # Leere Tabelle überspringen
 
         texts_raw.append(txt)
         metas_raw.append(extract_payload(el))
@@ -563,7 +656,11 @@ def parse_pdf(
             if element_type == "Table":
                 html = getattr(getattr(el, "metadata", None), "text_as_html", None)
                 if html:
-                    txt = _table_html_to_text(html) or txt
+                    table_text = _table_html_to_text(html)
+                    if table_text:  # Nur nicht-leere Tabellen verwenden
+                        txt = table_text
+                    else:
+                        continue  # Leere Tabelle überspringen
 
             if not txt.strip():
                 continue
@@ -728,14 +825,19 @@ def delete_all_chunks_opensearch() -> int:
     return int(resp.get("deleted", 0))
 
 
-def delete_chunks_by_process_opensearch(process_name: str) -> int:
+def delete_chunks_by_process_opensearch(process_name: str, os_index: str | None = None) -> int:
     """
     Löscht alle Chunks mit meta.process_name == process_name aus OpenSearch.
+    
+    Args:
+        process_name: Der Prozessname nach dem gefiltert wird
+        os_index: Optional - OpenSearch Index (default: settings.OS_INDEX)
     """
     os_client = get_opensearch()
+    index = os_index or settings.OS_INDEX
     resp = os_client.delete_by_query(
-        index=settings.OS_INDEX,
-        body={"query": {"terms": {"meta.process_name.keyword": [process_name]}}},
+        index=index,
+        body={"query": {"terms": {"meta.process_name": [process_name]}}},
     )
     return int(resp.get("deleted", 0))
 
@@ -754,13 +856,18 @@ def delete_all_chunks_qdrant() -> None:
     ensure_indices()
 
 
-def delete_chunks_by_process_qdrant(process_name: str) -> None:
+def delete_chunks_by_process_qdrant(process_name: str, qdrant_collection: str | None = None) -> None:
     """
     Löscht alle Punkte aus Qdrant, deren payload.process_name == process_name ist.
+    
+    Args:
+        process_name: Der Prozessname nach dem gefiltert wird
+        qdrant_collection: Optional - Qdrant Collection (default: settings.QDRANT_COLLECTION)
     """
     qd = get_qdrant()
+    collection = qdrant_collection or settings.QDRANT_COLLECTION
     return qd.delete(
-        collection_name=settings.QDRANT_COLLECTION,
+        collection_name=collection,
         points_selector=Filter(
             must=[
                 FieldCondition(
@@ -772,25 +879,35 @@ def delete_chunks_by_process_qdrant(process_name: str) -> None:
     )
 
 
-def delete_chunks_by_tag_opensearch(tag: str) -> int:
+def delete_chunks_by_tag_opensearch(tag: str, os_index: str | None = None) -> int:
     """
     Löscht alle Chunks mit meta.tags == tag aus OpenSearch.
+    
+    Args:
+        tag: Der Tag nach dem gefiltert wird
+        os_index: Optional - OpenSearch Index (default: settings.OS_INDEX)
     """
     os_client = get_opensearch()
+    index = os_index or settings.OS_INDEX
     resp = os_client.delete_by_query(
-        index=settings.OS_INDEX,
+        index=index,
         body={"query": {"terms": {"meta.tags.keyword": [tag]}}},
     )
     return int(resp.get("deleted", 0))
 
 
-def delete_chunks_by_tag_qdrant(tag: str) -> None:
+def delete_chunks_by_tag_qdrant(tag: str, qdrant_collection: str | None = None) -> None:
     """
     Löscht alle Punkte aus Qdrant, deren payload.tags == tag ist.
+    
+    Args:
+        tag: Der Tag nach dem gefiltert wird
+        qdrant_collection: Optional - Qdrant Collection (default: settings.QDRANT_COLLECTION)
     """
     qd = get_qdrant()
+    collection = qdrant_collection or settings.QDRANT_COLLECTION
     return qd.delete(
-        collection_name=settings.QDRANT_COLLECTION,
+        collection_name=collection,
         points_selector=Filter(
             must=[
                 FieldCondition(

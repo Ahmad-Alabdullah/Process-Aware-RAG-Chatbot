@@ -63,6 +63,13 @@ class AskBody(BaseModel):
 
     # Prompt-Konfiguration
     prompt_style: str = Field(default="cot", description="Prompt-Style")
+    
+    # Guardrail-Konfiguration
+    # Default: llm_only (basierend auf User-Feedback aus SUS-Evaluation)
+    guardrail_mode: str = Field(
+        default="llm_only",
+        description="Guardrail-Modus: 'hybrid' (Pattern+LLM), 'llm_only' (nur LLM, permissiver), 'disabled' (deaktiviert)"
+    )
 
     # Debug
     debug_return: bool = Field(

@@ -20,11 +20,25 @@ logger = logging.getLogger(__name__)
 class QueryIntent(Enum):
     """Query-Intent-Kategorien für Guardrail-Routing."""
     
-    PROCESS_RELATED = "process_related"  # Valide RAG-Query
+    PROCESS_RELATED = "process_related"  # Valide RAG-Query (eigenständig)
+    FOLLOWUP = "followup"  # Follow-up-Frage, braucht Reformulation
+    FEEDBACK = "feedback"  # Bestätigung/Danke (ok, super, danke)
     GREETING = "greeting"  # Begrüßungen (Hi, Hallo)
     CHITCHAT = "chitchat"  # Smalltalk (Wie geht's?)
     OFF_TOPIC = "off_topic"  # Komplett unrelated
     UNCLEAR = "unclear"  # Unklare Anfrage
+
+
+class GuardrailMode(str, Enum):
+    """
+    Konfigurierbare Guardrail-Modi.
+    
+    Basiert auf User-Feedback (SUS-Evaluation): Pattern-Matching kann
+    bei Edge-Cases zu strikt sein. LLM-only bietet mehr Flexibilität.
+    """
+    HYBRID = "hybrid"      # Pattern + LLM-Verification (default, balanced)
+    LLM_ONLY = "llm_only"  # Nur LLM-Klassifikation (permissiver)
+    DISABLED = "disabled"  # Guardrails deaktiviert (immer PROCESS_RELATED)
 
 
 # LLM-Prompt für Intent-Klassifikation (nur für ambige Fälle)
@@ -74,6 +88,9 @@ FALLBACK_RESPONSES = {
         "Ich kann Ihnen bei Fragen zu Prozessen wie Elternzeit, Mutterschutz, "
         "Dienstreisen oder anderen Verwaltungsabläufen helfen. "
         "Wie kann ich Ihnen behilflich sein?"
+    ),
+    QueryIntent.FEEDBACK: (
+        "Gerne! 😊 Kann ich Ihnen noch bei etwas anderem helfen?"
     ),
     QueryIntent.CHITCHAT: (
         "Danke der Nachfrage! Ich bin ein spezialisierter Assistent für Hochschulprozesse. "
@@ -231,6 +248,80 @@ INTENT_DESCRIPTIONS = {
 }
 
 
+def classify_query_llm_only(query: str, chat_history: Optional[List[dict]] = None) -> Tuple[QueryIntent, float]:
+    """
+    Kontextbewusste LLM-basierte Intent-Klassifikation.
+    
+    Verbesserung basierend auf Analyse:
+    - Verwendet Chat-History für kontextbewusste Entscheidung
+    - Unterscheidet FEEDBACK (ok, danke) von echten FOLLOWUP-Fragen
+    - Entscheidet auch, ob Reformulation nötig ist
+    
+    Kategorien:
+    - PROCESS_RELATED: Eigenständige Prozessfrage
+    - FOLLOWUP: Follow-up das Reformulation braucht
+    - FEEDBACK: Bestätigung/Danke (keine RAG nötig)
+    - GREETING/CHITCHAT/OFF_TOPIC: Non-RAG
+    
+    Basiert auf:
+    - "LLM-based Intent Classification" (Zhong et al., 2023)
+    - "Contextual Query Understanding in RAG" (2025)
+    """
+    from app.services.llm import generate
+    from app.core.llm_config import LLMPresets
+    
+    logger.info(f"[LLM-Only] Classifying query with context: '{query[:50]}...'")
+    
+    # Kontext aus letzter Assistant-Antwort extrahieren
+    context_info = ""
+    if chat_history and len(chat_history) >= 1:
+        # Letzte Assistant-Antwort finden
+        for msg in reversed(chat_history):
+            if msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                if len(content) > 50:
+                    # Nur ersten Teil für Kontext
+                    context_info = f"\nVorherige Assistent-Antwort (Auszug): \"{content[:250]}...\""
+                break
+    
+    try:
+        prompt = f"""Analysiere die Benutzeranfrage im Konversationskontext.
+{context_info}
+
+Aktuelle Anfrage: "{query}"
+
+Klassifiziere in GENAU EINE Kategorie:
+
+- PROCESS_RELATED: Eigenständige Frage zu Hochschulprozessen (Elternzeit, Mutterschutz, Dienstreisen, Anträge, etc.)
+- FOLLOWUP: Echte Nachfrage die den vorherigen Kontext braucht (z.B. "und was ist mit...?", "mehr Details bitte", "erkläre das genauer")
+- FEEDBACK: Bestätigung, Danke, Zustimmung OHNE neue Frage (z.B. "ok", "super", "danke", "verstanden", "alles klar", "perfekt")
+- GREETING: Reine Begrüßung ohne Frage (z.B. "Hallo", "Hi")
+- CHITCHAT: Smalltalk ohne Prozessbezug (z.B. "Wie geht's?", "Wer bist du?")
+- OFF_TOPIC: Komplett themenfremd (Sport, Wetter, Rezepte)
+
+WICHTIG: 
+- "ok", "super", "danke", "verstanden" nach einer Antwort = FEEDBACK (NICHT FOLLOWUP!)
+- Echte FOLLOWUPs stellen eine NEUE Frage oder bitten um Vertiefung
+- Im Zweifel bei echten Fragen: PROCESS_RELATED
+
+Antworte NUR mit dem Kategorie-Namen."""
+
+        response = generate(prompt, LLMPresets.fast_classification())
+        response = response.strip().upper().replace(" ", "_")
+        
+        for intent in QueryIntent:
+            if intent.name in response:
+                logger.info(f"[LLM-Only] Query classified as {intent.name}")
+                return intent, 0.85
+                
+    except Exception as e:
+        logger.warning(f"[LLM-Only] Classification failed: {e}")
+    
+    # Fallback: assume process-related (permissiv)
+    logger.info("[LLM-Only] Fallback to PROCESS_RELATED")
+    return QueryIntent.PROCESS_RELATED, 0.6
+
+
 def verify_with_llm(query: str, initial_intent: QueryIntent, confidence: float) -> Tuple[QueryIntent, float]:
     """
     LLM-Verification für unsichere Pattern-Klassifikationen.
@@ -296,7 +387,7 @@ def should_use_rag(intent: QueryIntent) -> bool:
     Nur PROCESS_RELATED Queries gehen durch RAG.
     Alle anderen bekommen Fallback-Antworten.
     """
-    return intent == QueryIntent.PROCESS_RELATED
+    return intent in (QueryIntent.PROCESS_RELATED, QueryIntent.FOLLOWUP)
 
 
 def get_fallback_response(intent: QueryIntent) -> str:
@@ -311,28 +402,44 @@ def get_fallback_response(intent: QueryIntent) -> str:
 
 def classify_query_with_context(
     query: str,
-    chat_history: Optional[List[dict]] = None
+    chat_history: Optional[List[dict]] = None,
+    mode: GuardrailMode = GuardrailMode.HYBRID
 ) -> Tuple[QueryIntent, float]:
     """
-    Kontext-bewusste Query-Klassifikation mit LLM-Verification.
+    Kontext-bewusste Query-Klassifikation mit konfigurierbarem Modus.
+    
+    Modi:
+    - HYBRID (default): Pattern + Context + LLM-Verification (balanced)
+    - LLM_ONLY: Reine LLM-Klassifikation (permissiver, für Edge-Cases)
+    - DISABLED: Bypass (immer PROCESS_RELATED)
     
     Hybrid-Ansatz basiert auf:
     - "Contextual Query Understanding in RAG" (2025)
     - "Hybrid NLU/LLM Intent Classification" (Voiceflow, 2024)
     - "LLM as Judge" Pattern (GuardrailsAI, 2024)
     
-    Flow:
-    1. Context-Check (Follow-up Patterns, Chat-History)
-    2. Pattern-basierte Klassifikation
-    3. LLM-Verification für unsichere Non-PROCESS Klassifikationen
-    
     Args:
         query: Die aktuelle Benutzeranfrage
         chat_history: Liste von {"role": "user"|"assistant", "content": str}
+        mode: Guardrail-Modus (HYBRID, LLM_ONLY, DISABLED)
         
     Returns:
         Tuple[QueryIntent, confidence]: Intent und Konfidenz
     """
+    # ========================================
+    # MODE ROUTING
+    # ========================================
+    if mode == GuardrailMode.DISABLED:
+        logger.info(f"[Guardrails DISABLED] Bypassing classification for: '{query[:50]}...'")
+        return QueryIntent.PROCESS_RELATED, 1.0
+    
+    if mode == GuardrailMode.LLM_ONLY:
+        logger.info(f"[Guardrails LLM_ONLY] Using pure LLM classification with context")
+        return classify_query_llm_only(query, chat_history)
+    
+    # ========================================
+    # HYBRID MODE (Original Flow)
+    # ========================================
     query_lower = query.lower().strip()
     
     # Follow-up Patterns die auf Kontext-Bezug hindeuten
@@ -346,6 +453,7 @@ def classify_query_with_context(
         "und was ist mit", "was ist mit",
         "das verstehe ich nicht", "erkläre", "erklär",
     ]
+
     
     logger.info(f"[Context Check] chat_history: {len(chat_history) if chat_history else 0} messages")
     

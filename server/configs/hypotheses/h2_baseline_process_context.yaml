@@ -1,0 +1,65 @@
+run_name: "H2_PROCESS_CONTEXT"
+dataset: "demo_queries_process"
+qa_base_url: "http://localhost:8000"
+
+# ============================================================
+# H2 Baseline: Process Context (Grober Prozessüberblick)
+# ============================================================
+# Alle Lanes, alle Schritte - kein lokales Gating
+# ============================================================
+
+qa_payload:
+  query: null
+  top_k: 5
+  use_hyde: false
+  use_rerank: false
+  rerank_top_n: 50
+  model: "qwen2.5:7b-instruct"
+  process_name: null    
+  process_id: null        
+  roles: []
+  whitelist_enabled: false 
+  tags: []
+  prompt_style: "cot"
+  gating_hint: ""         
+  debug_return: true
+
+factors:
+  retrieval: 
+    mode: "hybrid"
+    rrf_k: 60
+  
+  gating:
+    mode: "process_context"
+    force_process_context: true
+  
+  rerank: 
+    enabled: false
+  
+  chunking: 
+    max_characters: 2400
+    strategy: "semantic"
+  
+  embeddings: 
+    backend: "ollama"
+    model: "qwen3-embedding:4b"
+    index_suffix: "semantic_qwen3"
+  
+  llm:
+    qa:
+      model: "qwen2.5:7b-instruct"
+      num_ctx: 8192
+  
+  prompt:
+    style: "cot"
+  
+  evaluation:
+    use_llm_judge: true
+    llm_metrics: ["relevance"]
+    judge_model: "atla/selene-mini"
+    judge_temperature: 0.0
+
+metrics:
+  primary:
+    - h2_error_rate
+    - llm_answer_relevance

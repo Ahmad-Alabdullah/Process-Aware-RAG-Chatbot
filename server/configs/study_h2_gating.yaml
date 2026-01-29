@@ -3,26 +3,16 @@ baseline: "configs/baseline.yaml"
 description: |
   H2: BPMN-Whitelist-Gating reduziert Fehlvorschläge/Halluzinationen
   
-  Drei Bedingungen (via factors.gating.mode):
-  - NONE: Baseline ohne Prozesskontext im Prompt
-  - PROCESS_CONTEXT: Grober Prozessüberblick (alle Lanes/Schritte)
+  Zwei Bedingungen:
+  - PROCESS_CONTEXT: Grober Prozessüberblick (Baseline)
   - GATING_ENABLED: Lokaler, rollenspezifischer Kontext
   
-  Evaluation mit Selene-Mini LLM-Judge:
-  - Scope Violation: Erwähnt die Antwort Tasks außerhalb des erlaubten Kontexts?
-  - Hallucination: Erfindet die Antwort Prozessschritte?
-  - Role Boundary: Respektiert die Antwort Rollengrenzen?
+  Metrik-Set (2 LLM-Judge Metriken):
+  - h2_error_rate: Gating-Compliance (Hauptmetrik)
+  - llm_answer_relevance: Antwortqualität
 
 variants:
-  # Bedingung 1: NONE (Baseline)
-  - name: "H2_BASELINE"
-    override:
-      factors:
-        gating:
-          mode: "none"
-    description: "Baseline: Kein Prozesskontext im Prompt"
-
-  # Bedingung 2: PROCESS_CONTEXT (grober Kontext)
+  # PROCESS_CONTEXT (Baseline für H2)
   - name: "H2_PROCESS_CONTEXT"
     override:
       factors:
@@ -31,7 +21,7 @@ variants:
           force_process_context: true
     description: "Grober Prozesskontext ohne Rollenbeschränkung"
 
-  # Bedingung 3: GATING_ENABLED (lokaler + rollenspezifischer Kontext)
+  # GATING_ENABLED (Treatment)
   - name: "H2_GATING_ENABLED"
     override:
       factors:
@@ -39,70 +29,15 @@ variants:
           mode: "gating"
     description: "Lokaler, rollenspezifischer Kontext mit Whitelist"
 
-# Evaluation-Konfiguration (gilt für alle Varianten)
+# Evaluation-Konfiguration
 factors:
   evaluation:
     use_llm_judge: true
-    llm_metrics: ["consistency", "relevance", "faithfulness"]
+    llm_metrics: ["relevance"]
     judge_model: "atla/selene-mini"
 
+# 2 LLM-Judge Metriken
 metrics:
-  # LLM-Judge Output-Metriken (primär für H2)
   primary:
-    - h2_error_rate              # Kombinierte Fehlerrate (Hauptmetrik)
-    - output_violation_rate      # 0.0-1.0, niedriger = besser
-    - output_boundary_precision  # 0.0-1.0, höher = besser
-    - output_hallucination_rate  # 0.0-1.0, niedriger = besser
-
-  # Query-Typ-spezifische Metriken
-  structure_queries:
-    - h2_structure_violation_rate
-    - h2_hint_adherence
-
-  knowledge_queries:
-    - h2_knowledge_score
-    - h2_context_respected
-
-  mixed_queries:
-    - h2_scope_violation_rate
-    - h2_integration_score
-
-  # LLM-Judge Scores (1-5 Skala, für Detailanalyse)
-  scores:
-    - output_scope_score
-    - output_hallucination_score
-  
-  # RAGAS-Style Metriken (Neu)
-  ragas:
-    - llm_answer_relevance
-    - llm_context_relevance
-    - llm_faithfulness
-
-  # Input-Metriken (Manipulation Check)
-  manipulation_check:
-    - gating_lane_ids_recall
-    - gating_node_ids_recall
-    - gating_task_names_recall
-    - gating_avg_gating_recall
-
-  # Standard Retrieval-Metriken
-  secondary:
-    - recall@5
-    - ndcg@5
-    - llm_judge_used
-
-# Erwartete Ergebnisse
-expected_results:
-  H2_BASELINE:
-    h2_error_rate: ">0.4"
-    output_violation_rate: ">0.3"
-    output_hallucination_rate: ">0.2"
-    
-  H2_PROCESS_CONTEXT:
-    h2_error_rate: "0.2-0.35"
-    output_violation_rate: "0.15-0.25"
-    
-  H2_GATING_ENABLED:
-    h2_error_rate: "<0.15"
-    output_violation_rate: "<0.1"
-    output_hallucination_rate: "<0.1"
+    - h2_error_rate              # Hauptmetrik: Gating-Compliance
+    - llm_answer_relevance       # Antwortqualität

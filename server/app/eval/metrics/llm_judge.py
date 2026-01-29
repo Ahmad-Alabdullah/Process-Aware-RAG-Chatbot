@@ -334,95 +334,195 @@ C) INTEGRATION: Sind Prozess und Dokumente sinnvoll kombiniert?
 # ============================================================
 
 
-def h2_judge_by_query_type(
+def judge_h2_gating_compliance(
     query: str,
-    query_type: str,  # "structure" | "knowledge" | "mixed"
     response: str,
     gating_hint: str,
-    retrieved_chunks: List[str],
-    expected_gating: Dict[str, Any],
     process_id: Optional[str] = None,
     model: str = DEFAULT_JUDGE_MODEL,
 ) -> Dict[str, float]:
     """
-    Dispatcher: Wählt den passenden Judge basierend auf Query-Typ.
+    Vereinfachter H2-Judge: Prüft ob die Antwort den Gating-Hint respektiert.
+    
+    Braucht KEINE Gold-Gating-Daten - der Gating-Hint selbst definiert,
+    was erlaubt ist.
+    
+    Returns:
+        h2_error_rate: 0.0 (perfekt) bis 1.0 (komplett außerhalb des Kontexts)
     """
-
-    # Prozessdaten aus Neo4j
+    # Alle Prozess-Tasks aus Neo4j für Halluzinations-Check
     process_data = _get_process_tasks_from_neo4j(process_id) if process_id else {}
     all_task_names = process_data.get("all_task_names", [])
-    allowed_tasks = expected_gating.get("expected_task_names", [])
+    
+    # Falls kein Gating-Hint vorhanden, keine H2-Bewertung möglich
+    if not gating_hint or not gating_hint.strip():
+        return {"h2_error_rate": 0.0, "h2_gating_applied": 0.0}
+    
+    prompt = f"""Du bist ein Evaluator für Prozess-Antworten.
 
-    results: Dict[str, float] = {"query_type": query_type}
+### Aufgabe
+Prüfe, ob die Antwort den gegebenen Prozesskontext (Gating-Hint) respektiert.
+Die Antwort sollte NUR Informationen verwenden, die im Kontext erlaubt sind.
 
-    if query_type == "structure":
-        # Reine Struktur-Fragen: Strengste Bewertung
-        judge_result = judge_structure_response(
-            query=query,
-            response=response,
-            gating_hint=gating_hint,
-            allowed_tasks=allowed_tasks,
-            all_process_tasks=all_task_names,
-            model=model,
-        )
-        results["h2_structure_violation_rate"] = judge_result[
-            "structure_violation_rate"
-        ]
-        results["h2_hint_adherence"] = judge_result["hint_adherence"]
-        results["h2_hallucination_rate"] = judge_result["hallucination_rate"]
-        results["h2_score"] = float(judge_result["score"])
-        # Hauptmetrik für H2 bei Struktur-Fragen
-        results["h2_error_rate"] = judge_result["structure_violation_rate"]
+### Erlaubter Prozesskontext (Gating-Hint)
+{gating_hint}
 
-    elif query_type == "knowledge":
-        # Wissens-Fragen: Kontext soll respektiert werden
-        judge_result = judge_knowledge_response(
-            query=query,
-            response=response,
-            gating_hint=gating_hint,
-            retrieved_chunks=retrieved_chunks,
-            allowed_tasks=allowed_tasks,
-            all_process_tasks=all_task_names,
-            model=model,
-        )
-        results["h2_knowledge_score"] = judge_result["knowledge_score"]
-        results["h2_context_respected"] = (
-            1.0 if judge_result["context_respected"] else 0.0
-        )
-        results["h2_context_violation_count"] = float(
-            judge_result["context_violation_count"]
-        )
-        results["h2_score"] = float(judge_result["score"])
-        # Hauptmetrik: Context-Violations
-        results["h2_error_rate"] = judge_result["context_violation_count"] / max(
-            1, len(allowed_tasks)
-        )
+### Alle Prozessschritte im Prozess (zur Erkennung von Violations)
+{json.dumps(all_task_names, ensure_ascii=False) if all_task_names else "(Keine Prozessdaten verfügbar)"}
 
-    else:  # "mixed" oder default
-        # Gemischte Fragen: Balancierte Bewertung
-        judge_result = judge_mixed_response(
-            query=query,
-            response=response,
-            gating_hint=gating_hint,
-            retrieved_chunks=retrieved_chunks,
-            allowed_tasks=allowed_tasks,
-            all_process_tasks=all_task_names,
-            model=model,
-        )
-        results["h2_structure_score"] = float(judge_result["structure_score"])
-        results["h2_knowledge_score"] = float(judge_result["knowledge_score"])
-        results["h2_integration_score"] = float(judge_result["integration_score"])
-        results["h2_scope_violation_rate"] = judge_result["scope_violation_rate"]
-        results["h2_hallucination_rate"] = judge_result["hallucination_rate"]
-        # Hauptmetrik: Gewichtete Kombination
-        results["h2_error_rate"] = (
-            0.5 * judge_result["scope_violation_rate"]
-            + 0.3 * judge_result["hallucination_rate"]
-            + 0.2 * (1.0 - judge_result.get("document_grounded", 1))
-        )
+### Frage
+{query}
 
-    results["llm_judge_used"] = 1.0
-    return results
+### Zu bewertende Antwort
+{response}
+
+### Bewertungskriterien
+1. Erwähnt die Antwort Prozessschritte, die NICHT im Gating-Hint stehen?
+2. Gibt die Antwort Informationen über Rollen/Schritte, die nicht im Kontext erlaubt sind?
+3. Halluziniert die Antwort Prozessschritte, die gar nicht existieren?
+
+### Bewertungsskala (1-5)
+5 = Perfekt: Antwort bleibt vollständig im erlaubten Kontext
+4 = Gut: Fast alles im Kontext, minimale Abweichungen
+3 = Akzeptabel: Einige Erwähnungen außerhalb des Kontexts
+2 = Problematisch: Viele Erwähnungen außerhalb des Kontexts
+1 = Ungenügend: Antwort ignoriert den Kontext komplett
+
+### Antwortformat (JSON)
+{{
+    "score": <1-5>,
+    "mentions_outside_context": ["Schritt1", "Schritt2"],
+    "hallucinated_steps": ["Erfundener Schritt"],
+    "reasoning": "Kurze Begründung"
+}}"""
+
+    raw = _ollama_generate_judge(prompt, model=model)
+    parsed = _parse_judge_response(raw)
+    
+    score = min(5, max(1, parsed.get("score", 3)))
+    outside_context = parsed.get("mentions_outside_context", [])
+    hallucinated = parsed.get("hallucinated_steps", [])
+    
+    # h2_error_rate: Invers des normalisierten Scores
+    # Score 5 → error_rate 0.0, Score 1 → error_rate 1.0
+    h2_error_rate = (5 - score) / 4.0
+    
+    return {
+        "h2_error_rate": h2_error_rate,
+        "h2_gating_applied": 1.0,
+        "h2_score": score,
+        "h2_mentions_outside_context": len(outside_context),
+        "h2_hallucinated_steps": len(hallucinated),
+        "reasoning": parsed.get("reasoning", ""),
+    }
+
+
+# ============================================================
+# H3 GRAY ZONE METRICS
+# ============================================================
+
+
+def judge_h3_gray_zone(
+    query: str,
+    response: str,
+    retrieved_context: str = "",
+    model: str = DEFAULT_JUDGE_MODEL,
+) -> Dict[str, Any]:
+    """
+    H3-Judge: Prüft ob das System bei Grauzonen regelbasiert reagiert.
+    
+    Grauzonen = Fragen, deren Antwort nicht klar in den Dokumenten steht.
+    Gute Reaktion: Regelbasiert (Rückfrage, Eskalation, qualifizierte Teilantwort).
+    Schlechte Reaktion: Spekulation, unbelegte Behauptungen.
+    
+    Returns:
+        h3_appropriate_handling: 1.0 (gut) oder 0.0 (schlecht)
+        h3_speculation_detected: 1.0 wenn Spekulation erkannt
+        h3_uncertainty_expressed: 1.0 wenn Unsicherheit kommuniziert
+        h3_score: 1-5 Bewertung (streng)
+    """
+    prompt = f"""Du bist ein strenger Evaluator (LLM-Judge) für Chatbot-Antworten in Sonderfällen/Grauzonen (H3).
+
+WICHTIG:
+- Nutze KEIN externes Wissen. Bewerte ausschließlich anhand des angegebenen Kontexts.
+- Jede konkrete Behauptung (z.B. Fristen, Beträge, Zuständigkeiten, Regeln, Verfahren) gilt nur dann als korrekt,
+  wenn sie im Kontext explizit belegt ist. Sonst ist es Spekulation/Halluzination.
+- Wenn der Kontext leer oder unvollständig ist, ist korrektes Verhalten: belegte Teilantwort + klarer Hinweis auf fehlende Infos
+  + gezielte Rückfrage oder Eskalation/Verweis (statt raten).
+- Wenn die Antwort Quellen/IDs/Titel nennt, die NICHT im Kontext vorkommen, ist das Spekulation/Halluzination.
+
+### Verfügbarer Kontext (was das System hatte)
+{retrieved_context if retrieved_context else "(Kein spezifischer Kontext verfügbar)"}
+
+### Frage des Users
+{query}
+
+### Antwort des Systems
+{response}
+
+### Bewertungskriterien
+1) Belegbarkeit: Enthält die Antwort unbelegte konkrete Aussagen? -> speculation_detected = true.
+2) Unsicherheit: Kommuniziert die Antwort klar, was nicht ableitbar ist / welche Infos fehlen?
+3) Regelbasierte Reaktion: Rückfrage / Eskalation / qualifizierte Teilantwort statt Spekulation.
+
+### Bewertungsskala (1-5)
+5 = Perfekt: Keine unbelegten Behauptungen; Grauzone erkannt; klare Unsicherheit; passende Rückfrage/Eskalation oder strikt belegte Teilantwort
+4 = Gut: Sehr vorsichtig; höchstens minimale, klar als Annahme markierte Aussagen; insgesamt regelkonform
+3 = Akzeptabel: Keine harten Halluzinationen, aber zu vage/fehlende Steuerung (z.B. keine Rückfrage obwohl Infos fehlen)
+2 = Problematisch: Unbelegte konkrete Aussagen oder spekulative Details (auch wenn "möglicherweise")
+1 = Ungenügend: Behauptet unbelegte Dinge als Fakten / klare Halluzination
+
+### Antwortformat (JSON) – NUR JSON ausgeben
+{{
+  "score": <1-5>,
+  "speculation_detected": true/false,
+  "uncertainty_expressed": true/false,
+  "response_type": "qualified_answer|clarification|escalation|speculation",
+  "reasoning": "Kurze Begründung mit 1-2 Beispielen: welche Aussage war (nicht) im Kontext belegt und ob Rückfrage/Eskalation sinnvoll war."
+}}"""
+
+    raw = _ollama_generate_judge(prompt, model=model)
+    parsed = _parse_judge_response(raw)
+
+    def to_bool(x):
+        if isinstance(x, bool):
+            return x
+        if isinstance(x, str):
+            return x.strip().lower() == "true"
+        return False
+
+    def to_int(x, default=3):
+        try:
+            return int(x)
+        except Exception:
+            return default
+
+    score = min(5, max(1, to_int(parsed.get("score", 3), default=3)))
+    speculation = to_bool(parsed.get("speculation_detected", False))
+    uncertainty = to_bool(parsed.get("uncertainty_expressed", False))
+    response_type = str(parsed.get("response_type", "unknown")).strip().lower()
+
+    faithful = not speculation
+
+    context_empty = not retrieved_context
+
+    appropriate = faithful and (
+        response_type in {"qualified_answer", "clarification", "escalation"}
+    ) and (
+        # Bei leerem Kontext: nur Klarstellung/Eskalation oder qualifizierte Teilantwort MIT Unsicherheit
+        (not context_empty and (uncertainty or response_type in {"clarification", "escalation"} or score >= 4))
+        or
+        (context_empty and (response_type in {"clarification", "escalation"} or uncertainty))
+    )
+    
+    return {
+        "h3_appropriate_handling": 1.0 if appropriate else 0.0,
+        "h3_speculation_detected": 1.0 if speculation else 0.0,
+        "h3_uncertainty_expressed": 1.0 if uncertainty else 0.0,
+        "h3_score": float(score),
+        "h3_response_type": response_type,
+        "reasoning": parsed.get("reasoning", ""),  # Für Debugging/Traceability
+    }
 
 
 # ============================================================

@@ -22,7 +22,6 @@ from .db import (
     upsert_score,
     get_pool,
     upsert_gold_answers,
-    get_gold_gating,
 )
 from .dataset import load_queries, load_qrels, load_answers_jsonl
 from .clients.qa_client import QAClient
@@ -30,7 +29,7 @@ from .metrics.retrieval import compute_retrieval_metrics
 from .metrics.generation import (
     compute_generation_metrics,
 )
-from .metrics.gating import gating_recall, gating_precision
+# Gating-Metriken werden jetzt direkt im LLM-Judge berechnet
 from .reporting import METRIC_GROUPS, aggregate_and_store
 
 app = typer.Typer(help="RAG Evaluation Runner")
@@ -125,6 +124,13 @@ def load_dataset(dataset_name: str, queries_path: str, qrels_path: str):
     qid_to_pk = load_queries(dataset_name, queries_path)
     load_qrels(dataset_name, qid_to_pk, qrels_path)
     typer.echo(f"Loaded dataset '{dataset_name}': {len(qid_to_pk)} queries.")
+
+
+@app.command("load-queries")
+def load_queries_only(dataset_name: str, queries_path: str):
+    """Load only queries into the DB (without qrels). Useful for H2 study."""
+    qid_to_pk = load_queries(dataset_name, queries_path)
+    typer.echo(f"Loaded {len(qid_to_pk)} queries for dataset '{dataset_name}'.")
 
 
 @app.command()
@@ -231,7 +237,28 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
     # Embedding-Config aus factors
     emb_cfg = cfg.get_embedding_config()
     rerank_cfg = cfg.get_rerank_config()
+    gating_cfg = cfg.get_gating_config()
     os_index, qdrant_collection = cfg.get_index_names()
+
+    # H2-Studie: Gating-Modus bestimmt, welche Kontext-Daten gesendet werden
+    # - "none": Kein Prozesskontext (Baseline)
+    # - "process_context": Grober Überblick (force_process_context=True)
+    # - "gating": Lokaler Kontext (Standard, nutzt current_node_id)
+    gating_mode = gating_cfg.mode.lower()
+    
+    # Bestimme current_node_id und force_process_context basierend auf Modus
+    if gating_mode == "none":
+        # Baseline: Kein Prozesskontext im Prompt
+        effective_current_node_id = None
+        force_process_context = False
+    elif gating_mode == "process_context":
+        # Grober Überblick: Alle Lanes/Schritte, aber kein lokaler Kontext
+        effective_current_node_id = None
+        force_process_context = gating_cfg.force_process_context or True
+    else:
+        # Standard (gating): Nutze Query-Daten für lokalen Kontext
+        effective_current_node_id = qr["current_node_id"]
+        force_process_context = gating_cfg.force_process_context
 
     payload = {
         **cfg.qa_payload,
@@ -239,8 +266,9 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
         "process_name": qr["process_name"],
         "process_id": qr["process_id"],
         "roles": qr["roles"] or [],
-        "current_node_id": qr["current_node_id"],
+        "current_node_id": effective_current_node_id,
         "definition_id": qr["definition_id"],
+        "force_process_context": force_process_context,
     }
 
     # Reranking
@@ -261,6 +289,10 @@ async def _call_one(qr: QueryRow, client: QAClient, cfg: RunConfig, run_id: int)
     }
 
     t0 = asyncio.get_event_loop().time()
+    logger.debug(
+        f"H2 Gating: mode={gating_mode}, current_node_id={effective_current_node_id}, "
+        f"force_process_context={force_process_context}"
+    )
     resp = await client.ask(payload, query_params=query_params)
     latency = int((asyncio.get_event_loop().time() - t0) * 1000)
 
@@ -688,92 +720,81 @@ def score(
                 upsert_score(run_id, query_pk, "llm_faithfulness", float(faith_results["faithfulness_normalized"]), details={"reasoning": faith_results.get("reasoning"), "hallucinated_statements": faith_results.get("hallucinated_statements")})
 
         # ============================================================
-        # H2 GATING-METRIKEN
+        # H2 GATING-METRIKEN (Vereinfacht)
         # ============================================================
-        gold_gating = get_gold_gating(query_pk)
-        if gold_gating:
-            # Meta und Query-Daten holen
-            with pool.connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """select meta from ragrun.eval_run_items 
-                       where run_id=%s and query_pk=%s""",
-                    (run_id, query_pk),
-                )
-                row = cur.fetchone()
-                meta = row[0] if row else {}
+        # Prüft: Respektiert die Antwort den Gating-Hint?
+        # - Braucht KEINE Gold-Gating-Daten
+        # - Der Gating-Hint selbst definiert, was erlaubt ist
+        
+        # Meta-Daten holen (enthält gating_hint)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """select meta from ragrun.eval_run_items 
+                   where run_id=%s and query_pk=%s""",
+                (run_id, query_pk),
+            )
+            row = cur.fetchone()
+            meta = row[0] if row else {}
 
-            with pool.connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """select process_id, text, query_type 
-                       from ragrun.queries where id=%s""",
-                    (query_pk,),
-                )
-                q_row = cur.fetchone()
-                process_id = q_row[0] if q_row else None
-                query_text = q_row[1] if q_row else ""
-                query_type = q_row[2] if q_row and len(q_row) > 2 else "mixed"
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """select process_id, text from ragrun.queries where id=%s""",
+                (query_pk,),
+            )
+            q_row = cur.fetchone()
+            process_id = q_row[0] if q_row else None
+            query_text = q_row[1] if q_row else ""
 
-            gating_hint = meta.get("gating_hint", "")
-            gating_metadata = meta.get("gating_metadata", {})
+        gating_hint = meta.get("gating_hint", "")
+        
+        # Evaluation-Config
+        eval_cfg = cfg.factors.get("evaluation", {})
+        use_llm_judge = eval_cfg.get("use_llm_judge", True)
+        judge_model = eval_cfg.get("judge_model", "atla/selene-mini")
 
-            # ============================================================
-            # 1. INPUT-METRIKEN (Manipulation Check) - Regelbasiert
-            # ============================================================
-            # Prüft: Wurde das Gating korrekt angewendet?
-            # - Bei NONE: Sollte kein Gating-Kontext vorhanden sein
-            # - Bei GATING_ENABLED: Sollte die erwarteten Lanes/Nodes enthalten
+        # H2-Metrik: Prüft ob Antwort den Gating-Hint respektiert
+        if use_llm_judge and answer_text and gating_hint:
+            from .metrics.llm_judge import judge_h2_gating_compliance
 
-            predicted_gating = _extract_predicted_gating(gating_metadata)
+            h2_metrics = judge_h2_gating_compliance(
+                query=query_text,
+                response=answer_text,
+                gating_hint=gating_hint,
+                process_id=process_id,
+                model=judge_model,
+            )
 
-            # Recall: Wurden die erwarteten Elemente im Gating verwendet?
-            recall_metrics = gating_recall(predicted_gating, gold_gating)
-            for metric_key, value in recall_metrics.items():
-                upsert_score(run_id, query_pk, f"gating_{metric_key}", float(value))
+            reasoning = h2_metrics.get("reasoning", "")
 
-            # Precision: Wurden nur erwartete Elemente verwendet?
-            precision_metrics = gating_precision(predicted_gating, gold_gating)
-            for metric_key, value in precision_metrics.items():
-                upsert_score(run_id, query_pk, f"gating_{metric_key}", float(value))
+            for metric_name, value in h2_metrics.items():
+                if isinstance(value, (int, float)):
+                    upsert_score(run_id, query_pk, metric_name, float(value), details={"reasoning": reasoning})
 
-            # ============================================================
-            # 2. OUTPUT-METRIKEN (Effekt-Messung) - LLM-Judge (Selene)
-            # ============================================================
-            # Prüft: Hat das Gating die Antwortqualität verbessert?
-            # - Weniger Scope-Violations?
-            # - Weniger Halluzinationen?
-            # - Bessere Rollengrenzen-Einhaltung?
-
-            # Retrieved Chunks für Wissens-Fragen
-            retrieved_chunks = []
-            if isinstance(citations, list):
-                for c in citations:
-                    if isinstance(c, dict):
-                        retrieved_chunks.append(c.get("text", ""))
-                    elif isinstance(c, str):
-                        retrieved_chunks.append(c)
-
-            # Evaluation-Config
-            eval_cfg = cfg.factors.get("evaluation", {})
-            use_llm_judge = eval_cfg.get("use_llm_judge", True)
-            judge_model = eval_cfg.get("judge_model", "atla/selene-mini")
-
-            if use_llm_judge and answer_text:
-                from .metrics.llm_judge import h2_judge_by_query_type
-
-                h2_metrics = h2_judge_by_query_type(
-                    query=query_text,
-                    query_type=query_type,
-                    response=answer_text,
-                    gating_hint=gating_hint,
-                    retrieved_chunks=retrieved_chunks,
-                    expected_gating=gold_gating,
-                    process_id=process_id,
-                    model=judge_model,
-                )
-
-                for metric_name, value in h2_metrics.items():
-                    if isinstance(value, (int, float)):
-                        upsert_score(run_id, query_pk, metric_name, float(value))
+        # ============================================================
+        # H3 GRAY ZONE METRIKEN
+        # ============================================================
+        # Prüft: Reagiert das System bei unklaren Fällen angemessen?
+        # - Spekuliert es oder kommuniziert es Unsicherheit?
+        # - Aktiviert wenn "gray_zone" in llm_metrics
+        
+        if use_llm_judge and answer_text and "gray_zone" in judge_metrics:
+            from .metrics.llm_judge import judge_h3_gray_zone
+            
+            # Retrieved Context für Kontext-Vergleich
+            retrieved_context = "\n".join(cited_texts) if cited_texts else ""
+            
+            h3_metrics = judge_h3_gray_zone(
+                query=query_text,
+                response=answer_text,
+                retrieved_context=retrieved_context,
+                model=judge_model,
+            )
+            
+            reasoning = h3_metrics.get("reasoning", "")
+            
+            for metric_name, value in h3_metrics.items():
+                if isinstance(value, (int, float)):
+                    upsert_score(run_id, query_pk, metric_name, float(value), details={"reasoning": reasoning})
 
     # Basis-Metriken (immer berechnen/reporten)
     default_metrics = {
@@ -785,14 +806,14 @@ def score(
             "semantic_sim", "rouge_l_recall", "content_f1", "bertscore_f1",
             # Faithfulness
             "citation_recall", "citation_precision",
-            # LLM-Judge 
+            # LLM-Judge (RAGAS-Style)
             "factual_consistency_score", "factual_consistency_normalized",
             "llm_faithfulness", "llm_answer_relevance", "llm_context_relevance",
-            # H2 Gating
-            "gating_lane_ids_recall", "gating_avg_gating_recall", "gating_avg_gating_precision",
-            "h2_error_rate", "h2_structure_violation_rate", "h2_hallucination_rate",
-            "h2_hint_adherence", "h2_knowledge_score", "h2_context_respected",
-            "h2_integration_score", "h2_scope_violation_rate", "llm_judge_used",
+            # H2 Gating (vereinfacht auf 3 Metriken)
+            "h2_error_rate", "h2_gating_applied",
+            # H3 Gray Zone
+            "h3_appropriate_handling", "h3_speculation_detected", 
+            "h3_uncertainty_expressed", "h3_score",
     }
     
     # Metriken aus der Config hinzufügen (Primary/Secondary)

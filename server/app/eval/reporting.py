@@ -75,18 +75,21 @@ METRIC_GROUPS = {
         "name": "H2 Gating-Metriken",
         "metrics": [
             "h2_error_rate",
-            "h2_structure_violation_rate",
-            "h2_hallucination_rate",
-            "h2_hint_adherence",
-            "h2_knowledge_score",
-            "h2_context_respected",
-            "h2_integration_score",
-            "h2_scope_violation_rate",
-            "gating_avg_gating_recall",
-            "gating_avg_gating_precision",
+            "llm_answer_relevance",
         ],
         "primary": "h2_error_rate",
         "higher_is_better": False,  # Niedriger = besser
+    },
+    "h3_gray_zone": {
+        "name": "H3 Grauzonen-Metriken",
+        "metrics": [
+            "h3_appropriate_handling",
+            "h3_speculation_detected",
+            "h3_uncertainty_expressed",
+            "h3_score",
+        ],
+        "primary": "h3_appropriate_handling",
+        "higher_is_better": True,  # Höher = besser
     },
 }
 

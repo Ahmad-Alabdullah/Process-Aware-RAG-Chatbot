@@ -222,9 +222,9 @@ def ask(
     # Overview für PROCESS_CONTEXT (Ablation)
     if gating.overview:
         response["process_overview"] = {
-            "all_lanes": gating.overview.all_lanes,
-            "all_steps": gating.overview.all_steps[:10],
-            "key_decisions": gating.overview.key_decisions,
+            "lanes_with_tasks": gating.overview.lanes_with_tasks,
+            "nodes_without_lane": gating.overview.nodes_without_lane[:10],
+            "gateways": gating.overview.gateways,
         }
 
     return response

@@ -50,6 +50,26 @@ class EvaluationConfig(BaseModel):
     bertscore_model: str = Field(default="deepset/gbert-large")
 
 
+class GatingConfig(BaseModel):
+    """
+    Gating-Konfiguration für H2-Studie.
+    
+    Modi:
+    - none: Baseline ohne Prozesskontext (current_node_id wird ignoriert)
+    - process_context: Grober Prozessüberblick (force_process_context=True)
+    - gating: Lokaler, rollenspezifischer Kontext (Standard-Verhalten)
+    """
+
+    mode: str = Field(
+        default="gating",
+        description="'none', 'process_context', oder 'gating'"
+    )
+    force_process_context: bool = Field(
+        default=False,
+        description="Explizit force_process_context setzen (überschreibt mode)"
+    )
+
+
 class ChunkingConfig(BaseModel):
     """Chunking-Konfiguration."""
 
@@ -149,6 +169,22 @@ class RunConfig(BaseModel):
             ChunkingConfig(**chunk_cfg)
             if isinstance(chunk_cfg, dict)
             else ChunkingConfig()
+        )
+
+    def get_gating_config(self) -> GatingConfig:
+        """
+        Extrahiert Gating-Konfiguration aus factors.gating (H2-Studie).
+        
+        Ermöglicht das Überschreiben des Gating-Modus für Ablation-Studies:
+        - mode: "none" → Baseline ohne Prozesskontext
+        - mode: "process_context" → Grober Überblick
+        - mode: "gating" → Standard-Verhalten mit lokalem Kontext
+        """
+        gating_cfg = self.factors.get("gating", {})
+        return (
+            GatingConfig(**gating_cfg)
+            if isinstance(gating_cfg, dict)
+            else GatingConfig()
         )
 
     def get_qrels_path(self) -> str:

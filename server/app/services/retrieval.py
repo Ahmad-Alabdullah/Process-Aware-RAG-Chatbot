@@ -12,20 +12,8 @@ def rrf(rank: int, k: Optional[int] = None) -> float:
     return 1.0 / (k + rank)
 
 
-def _terms(field: str, values):
-    """Hilfsfunktion: immer als Liste an `terms` übergeben."""
-    if values is None:
-        return None
-    if not isinstance(values, (list, tuple, set)):
-        values = [values]
-    values = [v for v in values if v is not None and v != ""]
-    if not values:
-        return None
-    return {"terms": {field: list(values)}}
-
-
 import threading
-_embed_dynamic_lock = threading.Lock()  # Serialize GPU inference
+_embed_dynamic_lock = threading.Lock()
 
 def embed_texts_dynamic(
     texts: List[str],
@@ -47,7 +35,7 @@ def embed_texts_dynamic(
         from sentence_transformers import SentenceTransformer
 
         _model = SentenceTransformer(model)
-        # Serialize GPU inference to prevent CUDA race conditions
+        
         with _embed_dynamic_lock:
             return _model.encode(texts, normalize_embeddings=True).tolist()
     else:
@@ -106,7 +94,7 @@ def hybrid_search(
     os_idx = os_index or settings.OS_INDEX
     qd_col = qdrant_collection or settings.QDRANT_COLLECTION
 
-    # Wenn Reranking aktiv, mehr Kandidaten holen
+    
     fetch_k = rerank_top_n if use_rerank else k * 5
 
     os_rrf: Dict[str, float] = {}
@@ -128,17 +116,16 @@ def hybrid_search(
             }
         ]
 
-        os_filters: List[Dict[str, Any]] = []
+        os_filters = [
+            {"terms": {field: [v] if isinstance(v, str) else list(v)}}
+            for field, v in [
+                ("meta.process_name", process_name),
+                ("meta.tags", tags),
+            ]
+            if v
+        ]
 
-        t = _terms("meta.process_name", process_name)
-        if t:
-            os_filters.append(t)
-
-        t = _terms("meta.tags", tags)
-        if t:
-            os_filters.append(t)
-
-        bool_query: Dict[str, Any] = {"must": should}  # Changed from "should" to "must" to ensure query matches
+        bool_query: Dict[str, Any] = {"must": should}
         if os_filters:
             bool_query["filter"] = os_filters
 
@@ -179,7 +166,7 @@ def hybrid_search(
 
         qfilter = Filter(must=must_conditions) if must_conditions else None
 
-        # Dynamisches Embedding
+        
         vec = embed_texts_dynamic([q], backend=embedding_backend, model=embedding_model)[0]
 
         qd_hits = qd.search(
@@ -230,14 +217,14 @@ def hybrid_search(
                     "chunk_id": d["_id"],
                     "text": src.get("text", ""),
                     "document_id": src.get("document_id"),
-                    "file_name": meta.get("file_name"),  # from meta.file_name
+                    "file_name": meta.get("file_name"),
                     "process_name": meta.get("process_name"),
                     "tags": meta.get("tags"),
                     "page_number": meta.get("page_number"),
                     "section_title": meta.get("section_title"),
                     "title": meta.get("title") or meta.get("section_title"),
                     "rrf_score": fused.get(d["_id"], 0.0),
-                    "source": source_label,  # Dynamisch je nach Modus
+                    "source": source_label,
                 }
 
         for cid in top_ids:

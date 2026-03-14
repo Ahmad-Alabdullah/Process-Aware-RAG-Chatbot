@@ -1,6 +1,6 @@
 [MAIN]
-# Use multiple processes to speed up pylint
-jobs = 1
+# Use all available CPU cores to speed up pylint
+jobs = 0
 
 # Allow loading of all C extensions
 unsafe-load-any-extension = no
@@ -21,7 +21,7 @@ max-line-length = 120
 
 [BASIC]
 # Good variable names which should always be accepted
-good-names = i, j, k, v, e, f, s, x, df, el, qa, db, _
+good-names = i, j, k, v, e, _, df, el, db
 
 [DESIGN]
 # Maximum number of arguments for function / method (default is 5)
